@@ -1,0 +1,6 @@
+build/
+*.dll
+*.exe
+*.log
+coop_saves/
+coop_logs/
