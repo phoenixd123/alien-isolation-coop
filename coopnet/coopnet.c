@@ -26,6 +26,7 @@
 #include "view.h"
 
 int probe_install(const char *dir, const char *profile, void (*logf)(const char *, ...));
+void puppet_tick(int in_level, int peer_live, const float peer_cam_pos[3], void (*logf)(const char *, ...));
 
 static FILE *g_log, *g_csv;
 static char g_profile[32] = "default";
@@ -279,6 +280,14 @@ static DWORD WINAPI net_thread(LPVOID p) {
         DWORD now = GetTickCount();
         if (c.ok) net_send(&c);
         net_recv();
+        {
+            int in_level = c.ok && (c.p[0] != 0.f || c.p[1] != 0.f || c.p[2] != 0.f);
+            float pp[3]; int live;
+            EnterCriticalSection(&g_cs);
+            memcpy(pp, g_peer.p, 12); live = g_peer.valid && (GetTickCount() - g_peer.t_ms) < 1500;
+            LeaveCriticalSection(&g_cs);
+            puppet_tick(in_level, live, pp, logf_);
+        }
         if (g_csv && c.ok && now - last_csv >= 100) {
             fprintf(g_csv, "%lu", now);
             for (int i = 0; i < 16; i++) fprintf(g_csv, ",%.5f", c.raw[i]);

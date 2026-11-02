@@ -1,0 +1,121 @@
+// cathtool: read-only inspection of Alien: Isolation level scripts (COMMANDS.PAK) with CathodeLib.
+//   cathtool find <levelsDir> <text>          composites / entity names / function types containing text, per level
+//   cathtool funcs <COMMANDS.PAK> <FuncType>  every entity of that function type with its composite and parameters
+using System;
+using System.IO;
+using System.Linq;
+using CATHODE;
+using CATHODE.Scripting;
+using CathodeLib;
+
+static class P {
+    static Global _g;
+    static Commands Load(string pak) {
+        // pak = <DATA>\ENV\PRODUCTION\<LEVEL>\WORLD\COMMANDS.PAK ; Level needs Global (DATA\ENV\GLOBAL)
+        string lvl = Path.GetDirectoryName(Path.GetDirectoryName(pak));
+        string env = Path.GetDirectoryName(Path.GetDirectoryName(lvl));
+        _g ??= new Global(Path.Combine(env, "GLOBAL"));
+        var level = new Level(lvl, _g);
+        if (level.Commands == null || !level.Commands.Loaded) throw new Exception("failed to load " + pak);
+        return level.Commands;
+    }
+    static int Main(string[] a) {
+        if (a[0] == "find") {
+            foreach (var lvl in Directory.GetDirectories(a[1])) {
+                var pak = Path.Combine(lvl, "WORLD", "COMMANDS.PAK");
+                if (!File.Exists(pak)) continue;
+                Commands c;
+                try { c = Load(pak); } catch (Exception e) { Console.WriteLine($"{Path.GetFileName(lvl)}: LOAD FAIL {e.Message}"); continue; }
+                int hits = 0;
+                foreach (var comp in c.Entries) {
+                    if (comp.name.IndexOf(a[2], StringComparison.OrdinalIgnoreCase) >= 0) { if (hits++ < 8) Console.WriteLine($"{Path.GetFileName(lvl)}: composite {comp.name}"); }
+                    foreach (var f in comp.functions) {
+                        string n = c.Utils.GetEntityName(comp, f) ?? "";
+                        if (n.IndexOf(a[2], StringComparison.OrdinalIgnoreCase) >= 0) { if (hits++ < 8) Console.WriteLine($"{Path.GetFileName(lvl)}: entity '{n}' type {f.function} in {comp.name}"); }
+                    }
+                }
+                Console.WriteLine($"{Path.GetFileName(lvl)}: {c.Entries.Count} composites, {hits} hits");
+            }
+            return 0;
+        }
+        if (a[0] == "funcs") {
+            var c = Load(a[1]);
+            foreach (var comp in c.Entries)
+                foreach (var f in comp.functions.Where(f => f.function.ToString() == a[2])) {
+                    Console.WriteLine($"{comp.name} :: {c.Utils.GetEntityName(comp, f)} [{f.shortGUID.ToByteString()}]");
+                    foreach (var p in f.parameters) Console.WriteLine($"    {p.name} = {p.content}");
+                    foreach (var l in f.childLinks) Console.WriteLine($"    link {l.thisParamID} -> {l.linkedParamID} ({c.Utils.GetEntityName(comp.shortGUID, l.linkedEntityID)})");
+                }
+            return 0;
+        }
+        if (a[0] == "addpartner") {
+            // addpartner <COMMANDS.PAK> <archetype composite> <x> <y> <z>
+            // Adds to the level's root composite: an actor instance (the partner body), a PositionMarker seeded with
+            // a magic position (coopnet finds it in memory and overwrites it), CMD_GoTo -> marker, a TriggerBindCharacter
+            // binding the command to the actor, and a LogicDelay loop that re-applies the command every 0.25 s.
+            var c = Load(a[1]);
+            var root = c.EntryPoints[0];
+            if (root.functions.Any(f => c.Utils.GetEntityName(root, f) == "COOP_Partner")) { Console.WriteLine("already added"); return 3; }
+            var arche = c.GetComposite(a[2]) ?? throw new Exception("no archetype " + a[2]);
+            float x = float.Parse(a[3], System.Globalization.CultureInfo.InvariantCulture), y = float.Parse(a[4], System.Globalization.CultureInfo.InvariantCulture), z = float.Parse(a[5], System.Globalization.CultureInfo.InvariantCulture);
+
+            var partner = root.AddFunction(arche);
+            c.Utils.SetEntityName(root, partner, "COOP_Partner");
+            partner.AddParameter("position", new cTransform(new System.Numerics.Vector3(x, y, z), new System.Numerics.Vector3(0, 0, 0)));
+            partner.AddParameter("spawn_on_reset", new cBool(true));
+
+            var marker = root.AddFunction(FunctionType.PositionMarker);
+            c.Utils.SetEntityName(root, marker, "COOP_Target");
+            marker.AddParameter("position", new cTransform(new System.Numerics.Vector3(1234.5f, 987.25f, 4321.75f), new System.Numerics.Vector3(0, 0, 0)));
+
+            var go = root.AddFunction(FunctionType.CMD_GoTo);
+            c.Utils.SetEntityName(root, go, "COOP_GoTo");
+            go.AddParameter("move_type", new cEnum(EnumType.MOVE, 3));
+            go.AddParameter("override_all_ai", new cBool(true));
+            go.AddParameter("use_stopping_anim", new cBool(true));
+            go.AddParameter("arrived_radius", new cFloat(1.0f));
+            go.AddParameterLink("Waypoint", marker, "reference");
+
+            var bind = root.AddFunction(FunctionType.TriggerBindCharacter);
+            c.Utils.SetEntityName(root, bind, "COOP_Bind");
+            bind.AddParameterLink("characters", partner, "npc_reference");
+            bind.AddParameterLink("bound_trigger", go, "apply_start");
+
+            var loop = root.AddFunction(FunctionType.LogicDelay);
+            c.Utils.SetEntityName(root, loop, "COOP_Loop");
+            loop.AddParameter("delay", new cFloat(0.25f));
+            loop.AddParameter("start_on_reset", new cBool(true));
+            loop.AddParameterLink("on_delay_finished", bind, "trigger");
+            loop.AddParameterLink("on_delay_finished", loop, "trigger");      // keep looping
+            partner.AddParameterLink("finished_spawning", loop, "trigger");  // and start once the actor exists
+
+            if (!c.Save()) { Console.WriteLine("SAVE FAILED"); return 4; }
+            Console.WriteLine($"added partner ({a[2]}) at {x},{y},{z}; saved {a[1]}");
+            return 0;
+        }
+        if (a[0] == "comp") {
+            var c = Load(a[1]);
+            var comp = c.Entries.FirstOrDefault(x => x.name == a[2]);
+            if (comp == null) { Console.WriteLine("no composite " + a[2]); return 2; }
+            Console.WriteLine($"composite {comp.name} [{comp.shortGUID.ToByteString()}] vars={comp.variables.Count} funcs={comp.functions.Count} proxies={comp.proxies.Count} aliases={comp.aliases.Count}");
+            foreach (var v in comp.variables) Console.WriteLine($"  VAR {v.name} : {v.type}");
+            foreach (var f in comp.functions) {
+                var fc = c.GetComposite(f.function);
+                Console.WriteLine($"  FUNC {c.Utils.GetEntityName(comp, f)} : {(fc != null ? "composite " + fc.name : f.function.ToString())}");
+                foreach (var p in f.parameters) Console.WriteLine($"      {p.name} = {p.content}");
+                foreach (var l in f.childLinks) Console.WriteLine($"      link {l.thisParamID} -> {l.linkedParamID} ({c.Utils.GetEntityName(comp.shortGUID, l.linkedEntityID)})");
+            }
+            foreach (var px in comp.proxies) {
+                Console.WriteLine($"  PROXY {c.Utils.GetEntityName(comp, px)}");
+                foreach (var l in px.childLinks) Console.WriteLine($"      link {l.thisParamID} -> {l.linkedParamID} ({c.Utils.GetEntityName(comp.shortGUID, l.linkedEntityID)})");
+            }
+            foreach (var al in comp.aliases) {
+                Console.WriteLine($"  ALIAS {c.Utils.GetEntityName(comp, al)}");
+                foreach (var p in al.parameters) Console.WriteLine($"      {p.name} = {p.content}");
+                foreach (var l in al.childLinks) Console.WriteLine($"      link {l.thisParamID} -> {l.linkedParamID} ({c.Utils.GetEntityName(comp.shortGUID, l.linkedEntityID)})");
+            }
+            return 0;
+        }
+        return 1;
+    }
+}
