@@ -25,6 +25,8 @@
 #include "proto.h"
 #include "view.h"
 
+int probe_install(const char *dir, const char *profile, void (*logf)(const char *, ...));
+
 static FILE *g_log, *g_csv;
 static char g_profile[32] = "default";
 static char g_name[16] = "partner";
@@ -317,6 +319,7 @@ static void init(HMODULE self) {
     if (g_csv) { fprintf(g_csv, "ms"); for (int i = 0; i < 16; i++) fprintf(g_csv, ",r%d", i); fprintf(g_csv, ",pv,px,py,pz\n"); }
     if (GetEnvironmentVariableA("AIC_FWD_SIGN", b, sizeof b)) g_fwd_sign = atoi(b) < 0 ? -1 : 1;
     logf_("coopnet up: profile=%s name=%s fwd_sign=%d", g_profile, g_name, g_fwd_sign);
+    probe_install(g_dir, g_profile, logf_);
     CloseHandle(CreateThread(NULL, 0, net_thread, NULL, 0, NULL));
     CloseHandle(CreateThread(NULL, 0, overlay_thread, NULL, 0, NULL));
 }
