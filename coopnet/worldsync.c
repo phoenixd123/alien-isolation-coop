@@ -1,12 +1,19 @@
 /*
- * worldsync: share world changes between the two games by replaying level-script methods (effect capture, first
- * slice). Runs inside the call_method hook (game thread) for capture and through replay.c for apply.
+ * worldsync: share world changes between the two games by replaying level-script methods (effect capture).
+ * Capture runs inside the call_method hook (game thread); apply goes through replay.c.
  *
- * Doors (every story level uses the same Archetypes\Misc_Subarchetypes\Door_Package IDs):
- *   capture: set_true on the package's IsOpen LogicSwitch -> this door just opened here.
- *   apply:   request_open on the package's Door entity at the same path. The door opens and auto-closes like a
- *            normal door, and locked doors stay locked.
- * Echo guard: a door opened from a remote event is not reported back for a few seconds.
+ * Each rule: when `method` hits entity `eid` (of `type`) whose owner composite is `owner`, send the `apply`
+ * methods for entities of the same composite instance (same path). The archetypes below have the same IDs in
+ * every story level (checked with `levelmod ids` on all levels).
+ *
+ *   Doors (Archetypes\Misc_Subarchetypes\Door_Package): IsOpen.set_true -> Door.request_open. Opens and
+ *     auto-closes like a normal door; locked doors stay locked.
+ *   Pickups (Required_Assets\Pickups\pickup_common): SetPersistentIntegerValue.trigger (the item was collected)
+ *     -> the same trigger (marks it taken, as a save would) and IntegerEquals_1.trigger (the check the game runs
+ *     on load, which fires hide_pickup). The item disappears for the partner; they don't get a copy.
+ *
+ * Only methods that appear as an `apply` here are accepted from the network.
+ * Echo guard: a path changed by a remote event is not reported back for a few seconds.
  */
 #include <windows.h>
 #include <stdint.h>
@@ -14,14 +21,25 @@
 #include "replay.h"
 #include "worldsync.h"
 
+#define SG_TRIGGER       0xd9d0ca29u
 #define SG_SET_TRUE      0x5eb0e648u
 #define SG_REQUEST_OPEN  0x8da169a3u
-#define SG_LOGICSWITCH   0x0e423fccu
-#define SG_DOOR_TYPE     0xaf6549bbu
-#define DP_COMPOSITE     0x56d0e3beu   /* Archetypes\Misc_Subarchetypes\Door_Package */
-#define DP_ISOPEN        0x95de1d55u   /* IsOpen (LogicSwitch) inside Door_Package */
-#define DP_DOOR          0x11c160bdu   /* Door (Door) inside Door_Package */
+#define T_LOGICSWITCH    0x0e423fccu
+#define T_DOOR           0xaf6549bbu
+#define T_SETINTEGER     0x02a3673bu
+#define T_INTEGEREQUALS  0xd2590676u
 #define ECHO_MS          4000
+
+typedef struct { uint32_t method, eid, type; } Act;
+typedef struct { const char *name; uint32_t owner; Act when; Act apply[3]; } Rule;
+
+static const Rule RULES[] = {
+    { "door", 0x56d0e3beu, { SG_SET_TRUE, 0x95de1d55u, T_LOGICSWITCH },
+      { { SG_REQUEST_OPEN, 0x11c160bdu, T_DOOR } } },
+    { "pickup", 0x65c68783u, { SG_TRIGGER, 0xd74757b0u, T_SETINTEGER },
+      { { SG_TRIGGER, 0xd74757b0u, T_SETINTEGER }, { SG_TRIGGER, 0xc29ee5fdu, T_INTEGEREQUALS } } },
+};
+#define NRULES (int)(sizeof RULES / sizeof RULES[0])
 
 static void (*g_logf)(const char *, ...);
 static int g_on;
@@ -53,13 +71,13 @@ static int echo_recent(uint32_t h) {
     return hit;
 }
 static void echo_mark(uint32_t h) {
-    DWORD now = GetTickCount(); int oldest = 0;
+    DWORD now = GetTickCount(); int slot = 0;
     EnterCriticalSection(&g_cs);
     for (int i = 0; i < 64; i++) {
-        if (g_echo[i].h == h) { oldest = i; break; }
-        if ((now - g_echo[i].t) > (now - g_echo[oldest].t)) oldest = i;
+        if (g_echo[i].h == h) { slot = i; break; }
+        if ((now - g_echo[i].t) > (now - g_echo[slot].t)) slot = i;
     }
-    g_echo[oldest].h = h; g_echo[oldest].t = now;
+    g_echo[slot].h = h; g_echo[slot].t = now;
     LeaveCriticalSection(&g_cs);
 }
 
@@ -67,37 +85,48 @@ void ws_init(void (*logf)(const char *, ...)) {
     g_logf = logf;
     InitializeCriticalSection(&g_cs);
     g_on = 1;
-    logf("worldsync: doors on");
+    logf("worldsync: %d rules (doors, pickups)", NRULES);
 }
 
 /* Owner chain of an entity: path[0] = ID of the instance entity that owns it, then its owner, ... */
-static int read_path(uint32_t ent, uint32_t *path, uint32_t *first_type) {
+static int read_path(uint32_t ent, uint32_t *path, uint32_t *owner_type) {
     uint32_t e[5];
     if (!rd(ent, e, sizeof e)) return 0;
     uint32_t hb = e[2]; int n = 0;
     while (hb && n < 6) {
         uint32_t b[4], p[5];
         if (!rd(hb, b, sizeof b) || !rd(b[3], p, sizeof p)) break;
-        if (n == 0 && first_type) *first_type = p[4];
+        if (n == 0 && owner_type) *owner_type = p[4];
         path[n++] = p[3]; hb = p[2];
     }
     return n;
 }
 
-void ws_on_call(const uint32_t *msg, const uint32_t *target) {
-    /* Hot path: the engine is about to use both pointers, so they are valid here. */
-    if (!g_on || !msg || msg[0] != SG_SET_TRUE || !target || target[3] != DP_ISOPEN || target[4] != SG_LOGICSWITCH) return;
-    WorldEvt ev; memset(&ev, 0, sizeof ev);
-    uint32_t owner_type = 0;
-    ev.npath = read_path((uint32_t)(uintptr_t)target, ev.path, &owner_type);
-    if (ev.npath == 0 || owner_type != DP_COMPOSITE) return;   /* IsOpen of some other composite */
-    uint32_t h = path_hash(ev.path, ev.npath);
-    if (echo_recent(h)) return;
-    ev.method = SG_REQUEST_OPEN; ev.eid = DP_DOOR; ev.type = SG_DOOR_TYPE;
+static void push(const WorldEvt *ev) {
     LONG w = g_out_w;
     if (w - g_out_r >= NOUT) return;
-    g_out[w % NOUT] = ev;
+    g_out[w % NOUT] = *ev;
     InterlockedIncrement(&g_out_w);
+}
+
+void ws_on_call(const uint32_t *msg, const uint32_t *target) {
+    /* Hot path: the engine is about to use both pointers, so they are valid here. */
+    if (!g_on || !msg || !target) return;
+    uint32_t m = msg[0], eid = target[3], type = target[4];
+    for (int r = 0; r < NRULES; r++) {
+        const Rule *R = &RULES[r];
+        if (m != R->when.method || eid != R->when.eid || type != R->when.type) continue;
+        WorldEvt ev; memset(&ev, 0, sizeof ev);
+        uint32_t owner = 0;
+        ev.npath = read_path((uint32_t)(uintptr_t)target, ev.path, &owner);
+        if (ev.npath == 0 || owner != R->owner) return;
+        if (echo_recent(path_hash(ev.path, ev.npath))) return;
+        for (int a = 0; a < 3 && R->apply[a].method; a++) {
+            ev.method = R->apply[a].method; ev.eid = R->apply[a].eid; ev.type = R->apply[a].type;
+            push(&ev);
+        }
+        return;
+    }
 }
 
 int ws_pop(WorldEvt *ev) {
@@ -109,7 +138,11 @@ int ws_pop(WorldEvt *ev) {
 
 void ws_apply(const WorldEvt *ev) {
     if (!g_on) return;
-    if (ev->method != SG_REQUEST_OPEN || ev->eid != DP_DOOR) return;   /* only what we know how to apply */
+    int ok = 0;
+    for (int r = 0; r < NRULES && !ok; r++)
+        for (int a = 0; a < 3 && RULES[r].apply[a].method; a++)
+            if (RULES[r].apply[a].method == ev->method && RULES[r].apply[a].eid == ev->eid && RULES[r].apply[a].type == ev->type) { ok = 1; break; }
+    if (!ok) { g_logf("worldsync: ignored an event that matches no rule (%08x on %08x)", ev->method, ev->eid); return; }
     ReplayKey k; memset(&k, 0, sizeof k);
     k.method = ev->method; k.eid = ev->eid; k.type = ev->type; k.npath = ev->npath;
     memcpy(k.path, ev->path, (size_t)ev->npath * 4);
