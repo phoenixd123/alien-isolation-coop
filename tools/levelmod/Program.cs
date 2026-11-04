@@ -93,6 +93,22 @@ static class P {
             Console.WriteLine($"added partner ({a[2]}) at {x},{y},{z}; saved {a[1]}");
             return 0;
         }
+        if (a[0] == "ids") {
+            // ids <COMMANDS.PAK>: every ShortGuid the level script defines, one per line, as the little-endian dword
+            // the engine would hold in memory: kind  hex  composite  name  type. For matching runtime dumps.
+            var c = Load(a[1]);
+            foreach (var comp in c.Entries) {
+                Console.WriteLine($"C\t{comp.shortGUID.AsUInt32:x8}\t{comp.name}\t\t");
+                foreach (var f in comp.functions) {
+                    var fc = c.GetComposite(f.function);
+                    Console.WriteLine($"E\t{f.shortGUID.AsUInt32:x8}\t{comp.name}\t{c.Utils.GetEntityName(comp, f)}\t{(fc != null ? fc.name : f.function.ToString())}");
+                }
+                foreach (var v in comp.variables) Console.WriteLine($"V\t{v.shortGUID.AsUInt32:x8}\t{comp.name}\t{v.name}\t{v.type}");
+                foreach (var px in comp.proxies) Console.WriteLine($"X\t{px.shortGUID.AsUInt32:x8}\t{comp.name}\t{c.Utils.GetEntityName(comp, px)}\tproxy");
+                foreach (var al in comp.aliases) Console.WriteLine($"A\t{al.shortGUID.AsUInt32:x8}\t{comp.name}\t{c.Utils.GetEntityName(comp, al)}\talias");
+            }
+            return 0;
+        }
         if (a[0] == "comp") {
             var c = Load(a[1]);
             var comp = c.Entries.FirstOrDefault(x => x.name == a[2]);
