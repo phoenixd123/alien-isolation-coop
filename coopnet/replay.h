@@ -3,7 +3,12 @@
 #include <stdint.h>
 
 /* path[0] = ID of the composite-instance entity that owns the target, path[1] its owner, ... up to the root. */
-typedef struct { uint32_t method, eid, type; uint32_t path[8]; int npath; } ReplayKey;
+typedef struct {
+    uint32_t method, eid, type; uint32_t path[8]; int npath;
+    int (*owner_ok)(uint32_t owner_type);   /* optional: the owner composite's type must pass */
+    int via_hook;                           /* tests: dispatch through the hook so capture sees it */
+} ReplayKey;
+void replay_set_hook(uint32_t(__attribute__((thiscall)) *hook)(void *, void *, void *, void *));
 
 void replay_init(void (*logf)(const char *, ...));
 int replay_request(const ReplayKey *k);   /* resolve in the background, then run on the next dispatch */

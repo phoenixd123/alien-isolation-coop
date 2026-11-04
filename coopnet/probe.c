@@ -205,6 +205,7 @@ static char g_cmd_path[MAX_PATH + 64];
 static int parse_key(const char *s, ReplayKey *k) {
     char *q;
     memset(k, 0, sizeof *k);
+    if (*s == 'h') { k->via_hook = 1; s++; }   /* "h..." = dispatch through the hook, like a game event */
     k->method = strtoul(s, &q, 16); if (*q != ':') return 0;
     k->eid = strtoul(q + 1, &q, 16); if (*q != ':') return 0;
     k->type = strtoul(q + 1, &q, 16);
@@ -249,6 +250,7 @@ int probe_install(const char *dir, const char *profile, void (*logf)(const char 
     if (g_sync) ws_init(logf);
     g_mode = b[0] - '0';
     replay_init(logf);
+    replay_set_hook(cm_hook);
     snprintf(g_cmd_path, sizeof g_cmd_path, "%s\\coop_logs\\replay_%s.cmd", dir, profile);
     if (want_test) { g_test_logf = logf; CloseHandle(CreateThread(NULL, 0, replay_test_thread, test, 0, NULL)); }
     uint8_t *target = (uint8_t *)GetModuleHandleW(NULL) + RVA_CALL_METHOD;

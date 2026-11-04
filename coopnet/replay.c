@@ -26,6 +26,8 @@ static Req g_req[NREQ];
 static HANDLE g_wake;
 static void (*g_logf)(const char *, ...);
 static volatile LONG g_in_replay;
+static cm_fn g_hook;
+void replay_set_hook(cm_fn hook) { g_hook = hook; }
 
 static int rd(uintptr_t a, void *o, size_t n) {
     SIZE_T got = 0;
@@ -39,6 +41,7 @@ static int chain_ok(uint32_t ent, const ReplayKey *k) {
     for (int i = 0; i < k->npath; i++) {
         uint32_t b[4], p[5];
         if (!rd(hb, b, sizeof b) || !rd(b[3], p, sizeof p) || p[3] != k->path[i]) return 0;
+        if (i == 0 && k->owner_ok && !k->owner_ok(p[4])) return 0;
         hb = p[2];
     }
     return 1;
@@ -131,7 +134,7 @@ void replay_pump(void *self, cm_fn tramp, const void *cur_msg) {
         m[8] = 0x80000000u; m[9] = 2;
         void *pm = m;
         g_in_replay = 1;
-        uint32_t r = tramp(self, &m[2], &m[2], &pm);
+        uint32_t r = (g_req[i].k.via_hook && g_hook ? g_hook : tramp)(self, &m[2], &m[2], &pm);
         g_in_replay = 0;
         if (g_logf) g_logf("replay: sent %08x to entity %08x (hb %08x) -> %u", m[0], g_req[i].k.eid, m[2], r & 0xFF);
         InterlockedExchange(&g_req[i].state, 0);

@@ -12,6 +12,11 @@
  *     -> the same trigger (marks it taken, as a save would) and IntegerEquals_1.trigger (the check the game runs
  *     on load, which fires hide_pickup). The item disappears for the partner; they don't get a copy.
  *
+ *   Story (the 35 SCRIPT_StoryMission composites): LogicOnce.trigger -> the same LogicOnce on the partner.
+ *     Mission scripts gate their progress with LogicOnce nodes, which fire once by design, so replaying the
+ *     one that just fired can't double-fire anything; the partner's own mission script continues from there.
+ *     Entity wildcard (eid 0 = the captured entity); on apply, its owner must be a story composite.
+ *
  * Only methods that appear as an `apply` here are accepted from the network.
  * Echo guard: a path changed by a remote event is not reported back for a few seconds.
  */
@@ -28,9 +33,25 @@
 #define T_DOOR           0xaf6549bbu
 #define T_SETINTEGER     0x02a3673bu
 #define T_INTEGEREQUALS  0xd2590676u
+#define T_LOGICONCE      0x936b070fu
+#define OWNER_STORY      0xFFFFFFFFu   /* any composite in STORY[] */
 #define ECHO_MS          4000
 
-typedef struct { uint32_t method, eid, type; } Act;
+typedef struct { uint32_t method, eid, type; } Act;   /* eid 0: the captured entity itself */
+
+/* SCRIPT_StoryMission composite GUIDs, from `levelmod ids` over every level. */
+static const uint32_t STORY[] = {
+    0x054b0197u, 0x096564b1u, 0x09eaf288u, 0x194c9838u, 0x1a02de9cu, 0x1ae88077u,
+    0x216596efu, 0x273f61e2u, 0x2a51375du, 0x37c5b44au, 0x404ea802u, 0x469108d2u,
+    0x4d193eaeu, 0x4fc3d84fu, 0x571ec324u, 0x5cc5e3d2u, 0x66c34960u, 0x7295b688u,
+    0x790f71fdu, 0x79a53d9cu, 0x8cc8d80eu, 0x950a3824u, 0x9c702d43u, 0xa579b9adu,
+    0xabc4eb1du, 0xb2632a3du, 0xb4d89c0du, 0xbc974a05u, 0xc525bfa4u, 0xcd1fe962u,
+    0xcebfc559u, 0xd74ffa24u, 0xe33271c9u, 0xee20b383u, 0xf4f69debu
+};
+static int is_story(uint32_t c) {
+    for (unsigned i = 0; i < sizeof STORY / sizeof STORY[0]; i++) if (STORY[i] == c) return 1;
+    return 0;
+}
 typedef struct { const char *name; uint32_t owner; Act when; Act apply[3]; } Rule;
 
 static const Rule RULES[] = {
@@ -38,6 +59,8 @@ static const Rule RULES[] = {
       { { SG_REQUEST_OPEN, 0x11c160bdu, T_DOOR } } },
     { "pickup", 0x65c68783u, { SG_TRIGGER, 0xd74757b0u, T_SETINTEGER },
       { { SG_TRIGGER, 0xd74757b0u, T_SETINTEGER }, { SG_TRIGGER, 0xc29ee5fdu, T_INTEGEREQUALS } } },
+    { "story", OWNER_STORY, { SG_TRIGGER, 0, T_LOGICONCE },
+      { { SG_TRIGGER, 0, T_LOGICONCE } } },
 };
 #define NRULES (int)(sizeof RULES / sizeof RULES[0])
 
@@ -85,7 +108,7 @@ void ws_init(void (*logf)(const char *, ...)) {
     g_logf = logf;
     InitializeCriticalSection(&g_cs);
     g_on = 1;
-    logf("worldsync: %d rules (doors, pickups)", NRULES);
+    logf("worldsync: %d rules (doors, pickups, story LogicOnce in %d mission composites)", NRULES, (int)(sizeof STORY / sizeof STORY[0]));
 }
 
 /* Owner chain of an entity: path[0] = ID of the instance entity that owns it, then its owner, ... */
@@ -115,14 +138,14 @@ void ws_on_call(const uint32_t *msg, const uint32_t *target) {
     uint32_t m = msg[0], eid = target[3], type = target[4];
     for (int r = 0; r < NRULES; r++) {
         const Rule *R = &RULES[r];
-        if (m != R->when.method || eid != R->when.eid || type != R->when.type) continue;
+        if (m != R->when.method || (R->when.eid && eid != R->when.eid) || type != R->when.type) continue;
         WorldEvt ev; memset(&ev, 0, sizeof ev);
         uint32_t owner = 0;
         ev.npath = read_path((uint32_t)(uintptr_t)target, ev.path, &owner);
-        if (ev.npath == 0 || owner != R->owner) return;
+        if (ev.npath == 0 || (R->owner == OWNER_STORY ? !is_story(owner) : owner != R->owner)) return;
         if (echo_recent(path_hash(ev.path, ev.npath))) return;
         for (int a = 0; a < 3 && R->apply[a].method; a++) {
-            ev.method = R->apply[a].method; ev.eid = R->apply[a].eid; ev.type = R->apply[a].type;
+            ev.method = R->apply[a].method; ev.eid = R->apply[a].eid ? R->apply[a].eid : eid; ev.type = R->apply[a].type;
             push(&ev);
         }
         return;
@@ -138,14 +161,19 @@ int ws_pop(WorldEvt *ev) {
 
 void ws_apply(const WorldEvt *ev) {
     if (!g_on) return;
-    int ok = 0;
+    int ok = 0, story = 0;
     for (int r = 0; r < NRULES && !ok; r++)
-        for (int a = 0; a < 3 && RULES[r].apply[a].method; a++)
-            if (RULES[r].apply[a].method == ev->method && RULES[r].apply[a].eid == ev->eid && RULES[r].apply[a].type == ev->type) { ok = 1; break; }
+        for (int a = 0; a < 3 && RULES[r].apply[a].method; a++) {
+            const Act *A = &RULES[r].apply[a];
+            if (A->method == ev->method && (A->eid ? A->eid == ev->eid : ev->eid != 0) && A->type == ev->type) {
+                ok = 1; story = RULES[r].owner == OWNER_STORY; break;
+            }
+        }
     if (!ok) { g_logf("worldsync: ignored an event that matches no rule (%08x on %08x)", ev->method, ev->eid); return; }
     ReplayKey k; memset(&k, 0, sizeof k);
     k.method = ev->method; k.eid = ev->eid; k.type = ev->type; k.npath = ev->npath;
     memcpy(k.path, ev->path, (size_t)ev->npath * 4);
+    if (story) k.owner_ok = is_story;
     echo_mark(path_hash(ev->path, ev->npath));
     replay_request(&k);
 }
