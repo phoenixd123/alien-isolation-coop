@@ -337,6 +337,27 @@ static DWORD WINAPI overlay_thread(LPVOID p) {
     return 0;
 }
 
+/* ---------- character registry (research) ----------
+ * Found 2026-11-03 by scanning for the player's feet below the camera: a static array in AI.exe .data,
+ * record stride 0xB0, position (x,y,z floats) at exe+0x1307AC8 + k*0xB0, a tag dword right after it
+ * (player 0; meaning of the others unknown). Records follow the characters as they move. Logged every
+ * 5 s so a save with the alien shows which record and tag it gets. */
+#define RVA_CHAR_POS0 0x1307AC8u
+static void log_characters(void) {
+    uintptr_t base = (uintptr_t)GetModuleHandleW(NULL);
+    char line[1024]; int n = 0, len = 0;
+    for (int k = 0; k < 64 && len < (int)sizeof line - 64; k++) {
+        float r[3]; uint32_t tag;
+        if (!safe_read(base + RVA_CHAR_POS0 + (uintptr_t)k * 0xB0, r, 12) ||
+            !safe_read(base + RVA_CHAR_POS0 + (uintptr_t)k * 0xB0 + 12, &tag, 4)) break;
+        if (!(r[0] == r[0]) || fabsf(r[0]) > 5000.f || fabsf(r[1]) > 5000.f || fabsf(r[2]) > 5000.f ||
+            (fabsf(r[0]) + fabsf(r[2])) < 0.01f || fabsf(r[1]) < 0.01f || tag > 64) continue;   /* past the array: y = 0 */
+        len += snprintf(line + len, sizeof line - (size_t)len, " [%d t%u %.1f %.1f %.1f]", k, tag, r[0], r[1], r[2]);
+        n++;
+    }
+    if (n) logf_("chars: %d%s", n, line);
+}
+
 /* ---------- main loop ---------- */
 static DWORD WINAPI net_thread(LPVOID p) {
     (void)p;
@@ -371,6 +392,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
         if (now - last_stat >= 5000) {
             if (g_steam) logf_("steam: self=%llu peer=%llu", (unsigned long long)steamnet_self(), (unsigned long long)steamnet_peer());
             if (g_wtx || g_wrx) logf_("world: sent %u, received %u", g_wtx, g_wrx);
+            log_characters();
             logf_("stat: tx=%u rx=%u me=%d (%.2f %.2f %.2f) q=(%.3f %.3f %.3f %.3f) peer=%d age=%ld (%.2f %.2f %.2f)", g_tx, g_rx, c.ok,
                   c.p[0], c.p[1], c.p[2], c.q[0], c.q[1], c.q[2], c.q[3],
                   g_peer.valid, g_peer.valid ? (long)(now - g_peer.t_ms) : -1L, g_peer.p[0], g_peer.p[1], g_peer.p[2]);
