@@ -20,7 +20,7 @@ try { & .\harness.exe; $rc = $LASTEXITCODE } finally { Pop-Location }
 if ($rc) { throw "steamwrap offline test failed" }
 
 # --- coopnet + its tests (wire protocol over real UDP, projection math)
-Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" -lws2_32 -lgdi32 -luser32
+Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" "$root\coopnet\replay.c" "$root\coopnet\worldsync.c" -lws2_32 -lgdi32 -luser32
 Z -O2 -Wall -Wextra -o "$out\proto_test.exe" "$root\coopnet\test\proto_test.c" -lws2_32
 & "$out\proto_test.exe"; if ($LASTEXITCODE) { throw "proto_test failed" }
 Z -O2 -Wall -Wextra -o "$out\view_test.exe" "$root\coopnet\test\view_test.c"

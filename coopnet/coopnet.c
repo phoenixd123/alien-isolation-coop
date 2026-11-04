@@ -27,6 +27,7 @@
 #include "proto.h"
 #include "view.h"
 #include "steamnet.h"
+#include "worldsync.h"
 
 int probe_install(const char *dir, const char *profile, void (*logf)(const char *, ...));
 void puppet_tick(int in_level, int peer_live, const float peer_cam_pos[3], void (*logf)(const char *, ...));
@@ -130,6 +131,36 @@ static void steam_up(void) {
     FILE *f = fopen(p, "w"); if (f) { fprintf(f, "%llu\n", (unsigned long long)steamnet_self()); fclose(f); }
 }
 
+static void net_raw(const void *d, int n) {
+    if (g_steam) { steamnet_send(d, (uint32_t)n); return; }
+    if (g_sock != INVALID_SOCKET && g_peer_fixed) sendto(g_sock, (const char *)d, n, 0, (struct sockaddr *)&g_peer_addr, sizeof g_peer_addr);
+}
+
+/* World events from worldsync.c: each one goes out three times (unreliable transport); the receiver drops repeats. */
+static uint32_t g_wseq, g_wtx, g_wrx, g_wsession;
+static void net_send_world(void) {
+    WorldEvt ev;
+    while (ws_pop(&ev)) {
+        if (!g_wsession) g_wsession = (GetTickCount() * 2654435761u) ^ (g_pid << 16) ^ 1u;
+        WorldPkt k; proto_fill_world(&k, g_wsession, ++g_wseq, ev.method, ev.eid, ev.type, ev.path, ev.npath);
+        for (int i = 0; i < 3; i++) net_raw(&k, sizeof k);
+        g_wtx++;
+        logf_("world: sent #%u method %08x entity %08x path %08x/%08x (%d up)", k.seq, ev.method, ev.eid, ev.path[0], ev.path[1], ev.npath);
+    }
+}
+
+static uint32_t g_wseen[64], g_wpeer_session;
+static void on_world(const WorldPkt *k) {
+    if (k->session != g_wpeer_session) { memset(g_wseen, 0, sizeof g_wseen); g_wpeer_session = k->session; }   /* partner restarted */
+    for (int i = 0; i < 64; i++) if (g_wseen[i] == k->seq) return;
+    static int wi; g_wseen[wi++ & 63] = k->seq;
+    WorldEvt ev; memset(&ev, 0, sizeof ev);
+    ev.method = k->method; ev.eid = k->eid; ev.type = k->type; ev.npath = k->npath; memcpy(ev.path, k->path, sizeof k->path);
+    g_wrx++;
+    logf_("world: got #%u method %08x entity %08x path %08x/%08x (%d up)", k->seq, ev.method, ev.eid, ev.path[0], ev.path[1], ev.npath);
+    ws_apply(&ev);
+}
+
 static void net_send(const Cam *c) {
     if (g_steam) {
         PresencePkt k; proto_fill(&k, ++g_tx, c->p, c->q, c->ok == 2, g_name);
@@ -143,11 +174,14 @@ static void net_send(const Cam *c) {
 
 static void net_recv(void) {
     for (;;) {
-        PresencePkt k; struct sockaddr_in from; int fl = sizeof from, n;
-        if (g_steam) n = steamnet_recv(&k, sizeof k);
-        else n = recvfrom(g_sock, (char *)&k, sizeof k, 0, (struct sockaddr *)&from, &fl);
+        union { PresencePkt p; WorldPkt w; uint8_t raw[128]; } u;
+        struct sockaddr_in from; int fl = sizeof from, n;
+        if (g_steam) n = steamnet_recv(&u, sizeof u);
+        else n = recvfrom(g_sock, (char *)&u, sizeof u, 0, (struct sockaddr *)&from, &fl);
         if (n <= 0) return;
-        if (!proto_check(&k, n)) continue;
+        if (proto_check_world(&u.w, n)) { on_world(&u.w); continue; }
+        if (!proto_check(&u.p, n)) continue;
+        PresencePkt k = u.p;
         if (!g_steam && g_learn_peer && (!g_peer_fixed || from.sin_addr.s_addr != g_peer_addr.sin_addr.s_addr || from.sin_port != g_peer_addr.sin_port)) {
             g_peer_addr = from; g_peer_fixed = 1;   /* host: talk back to the joiner (latest address wins, handles NAT rebinding) */
             char ip[32]; inet_ntop(AF_INET, &from.sin_addr, ip, sizeof ip);
@@ -316,6 +350,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
         DWORD now = GetTickCount();
         if (g_steam) { steam_up(); steamnet_poll(); }
         if (c.ok) net_send(&c);
+        net_send_world();
         net_recv();
         {
             int in_level = c.ok && (c.p[0] != 0.f || c.p[1] != 0.f || c.p[2] != 0.f);
@@ -335,6 +370,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
         }
         if (now - last_stat >= 5000) {
             if (g_steam) logf_("steam: self=%llu peer=%llu", (unsigned long long)steamnet_self(), (unsigned long long)steamnet_peer());
+            if (g_wtx || g_wrx) logf_("world: sent %u, received %u", g_wtx, g_wrx);
             logf_("stat: tx=%u rx=%u me=%d (%.2f %.2f %.2f) q=(%.3f %.3f %.3f %.3f) peer=%d age=%ld (%.2f %.2f %.2f)", g_tx, g_rx, c.ok,
                   c.p[0], c.p[1], c.p[2], c.q[0], c.q[1], c.q[2], c.q[3],
                   g_peer.valid, g_peer.valid ? (long)(now - g_peer.t_ms) : -1L, g_peer.p[0], g_peer.p[1], g_peer.p[2]);

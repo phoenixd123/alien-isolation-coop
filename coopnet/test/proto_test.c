@@ -21,6 +21,17 @@ int main(void) {
     float nanp[3] = {0, 0, 0}; nanp[1] = strtof("nan", NULL); proto_fill(&bad, 1, nanp, q, 1, "x");
     CHECK(!proto_check(&bad, sizeof bad), "NaN position rejected");
 
+    /* world events (kind 2) */
+    uint32_t path[4] = {0xc26866c0, 0x459206cd, 0x36442079, 0x4af05bfe};
+    WorldPkt wp; proto_fill_world(&wp, 0x1234, 5, 0x8da169a3, 0x11c160bd, 0xaf6549bb, path, 4);
+    CHECK(proto_check_world(&wp, sizeof wp), "world packet accepted");
+    CHECK(wp.npath == 4 && !memcmp(wp.path, path, 16) && wp.method == 0x8da169a3 && wp.eid == 0x11c160bd, "world fields round-trip");
+    WorldPkt wb = wp; wb.path[1] ^= 1; CHECK(!proto_check_world(&wb, sizeof wb), "world bit flip rejected");
+    wb = wp; wb.npath = 7; wb.check = proto_sum(&wb, offsetof(WorldPkt, check)); CHECK(!proto_check_world(&wb, sizeof wb), "world npath > 6 rejected");
+    CHECK(!proto_check_world((const WorldPkt *)&k, sizeof k) && !proto_check((const PresencePkt *)&wp, sizeof wp), "kinds not confused");
+    uint32_t longpath[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    proto_fill_world(&wb, 0x1234, 6, 1, 2, 3, longpath, 8); CHECK(wb.npath == 6 && proto_check_world(&wb, sizeof wb), "long path clamped to 6");
+
     /* real UDP loopback: 500 packets, receiver keeps newest-seq only, sender shuffles 10% of pairs */
     WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
     SOCKET a = socket(AF_INET, SOCK_DGRAM, 0), b = socket(AF_INET, SOCK_DGRAM, 0);

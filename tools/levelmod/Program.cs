@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
 using CATHODE;
 using CATHODE.Scripting;
 using CathodeLib;
@@ -107,6 +108,29 @@ static class P {
                 foreach (var px in comp.proxies) Console.WriteLine($"X\t{px.shortGUID.AsUInt32:x8}\t{comp.name}\t{c.Utils.GetEntityName(comp, px)}\tproxy");
                 foreach (var al in comp.aliases) Console.WriteLine($"A\t{al.shortGUID.AsUInt32:x8}\t{comp.name}\t{c.Utils.GetEntityName(comp, al)}\talias");
             }
+            return 0;
+        }
+        if (a[0] == "instances") {
+            // instances <COMMANDS.PAK>: walk every composite instance from the level root and print the instance ID
+            // CathodeLib computes for it (both conventions), with its composite and the entity path. For matching the
+            // IDs the engine keeps on composite-instance entities at runtime.
+            var c = Load(a[1]);
+            int n = 0;
+            void Walk(Composite comp, List<ShortGuid> path, int depth) {
+                if (depth > 16) return;
+                foreach (var f in comp.functions) {
+                    var child = c.GetComposite(f.function);
+                    if (child == null) continue;
+                    var p = new List<ShortGuid>(path) { f.shortGUID };
+                    var withEnt = p.ToArray().GenerateCompositeInstanceID(true);
+                    var noEnt = p.ToArray().GenerateCompositeInstanceID(false);
+                    Console.WriteLine($"{withEnt.AsUInt32:x8}\t{noEnt.AsUInt32:x8}\t{child.name}\t{string.Join("/", p.Select(g => g.AsUInt32.ToString("x8")))}");
+                    n++;
+                    Walk(child, p, depth + 1);
+                }
+            }
+            Walk(c.EntryPoints[0], new List<ShortGuid>(), 0);
+            Console.Error.WriteLine($"{n} instances");
             return 0;
         }
         if (a[0] == "comp") {

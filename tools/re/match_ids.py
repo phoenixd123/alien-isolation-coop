@@ -11,7 +11,7 @@ import struct
 import sys
 from collections import Counter, defaultdict
 
-NDW = 1 + 3 + 1 + 1 + 24 + 768 + 64
+NDW = 1 + 3 + 1 + 1 + 24 + 768 + 64 + 64
 
 
 def load_samples(path):
@@ -23,6 +23,7 @@ def load_samples(path):
         l1 = d[6:30]
         l2 = d[30:798]
         s["tobj"] = d[798:862]
+        s["chain"] = [d[862 + c * 8:862 + c * 8 + 8] for c in range(8)]
         s["l1"] = [l1[k * 8:(k + 1) * 8] for k in range(3)]
         s["l2"] = [[l2[(k * 8 + j) * 32:(k * 8 + j + 1) * 32] for j in range(8)] for k in range(3)]
         out.append(s)
