@@ -4,3 +4,4 @@ build/
 *.log
 coop_saves/
 coop_logs/
+__pycache__/
