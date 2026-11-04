@@ -10,10 +10,12 @@
  * - Draws the peer on a click-through overlay window over the game's client area.
  * - Logs telemetry (CSV) for checking axis conventions against real movement.
  *
- * Env: AIC_PROFILE (p1/p2...), AIC_COOP_MODE (host|join), AIC_COOP_PORT (local UDP port),
- *      AIC_COOP_PEER (host:port), AIC_COOP_NAME (shown to the peer, <=15 chars).
+ * Env: AIC_PROFILE (p1/p2...), AIC_COOP_MODE (host|join|steam-host|steam-join), AIC_COOP_PORT (local UDP port),
+ *      AIC_COOP_PEER (host:port), AIC_COOP_PEER_STEAM (host's SteamID64, or "self" for a loopback test),
+ *      AIC_COOP_NAME (shown to the peer, <=15 chars; Steam modes default to the Steam name).
  * Defaults: p1 binds 45500 and talks to 127.0.0.1:45501; any other profile the reverse (two copies on one PC).
  * host: binds 45500 and answers whoever sends valid packets. join: AIC_COOP_PEER=<host ip>:45500.
+ * steam-host / steam-join: same packets over Steam P2P (steamnet.c), no IP or port forwarding.
  */
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -24,6 +26,7 @@
 #include <math.h>
 #include "proto.h"
 #include "view.h"
+#include "steamnet.h"
 
 int probe_install(const char *dir, const char *profile, void (*logf)(const char *, ...));
 void puppet_tick(int in_level, int peer_live, const float peer_cam_pos[3], void (*logf)(const char *, ...));
@@ -33,6 +36,7 @@ static char g_profile[32] = "default";
 static char g_name[16] = "partner";
 static DWORD g_pid;
 static volatile LONG g_quit;
+static char g_dir[MAX_PATH];
 
 static void logf_(const char *fmt, ...) {
     if (!g_log) return;
@@ -75,6 +79,9 @@ static uint32_t g_rx, g_tx;
 static SOCKET g_sock = INVALID_SOCKET;
 static struct sockaddr_in g_peer_addr;
 static int g_peer_fixed, g_learn_peer;
+static int g_steam;                   /* 1 = Steam P2P transport */
+static uint64_t g_steam_peer;
+static int g_name_set;
 
 static int resolve(const char *hostport, struct sockaddr_in *out) {
     char host[128]; const char *c = strrchr(hostport, ':'); if (!c) return 0;
@@ -89,6 +96,16 @@ static void net_init(void) {
     WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
     char buf[160], mode[16] = ""; int is_p1 = !strcmp(g_profile, "p1") || !strcmp(g_profile, "default");
     GetEnvironmentVariableA("AIC_COOP_MODE", mode, sizeof mode);
+    if (!strncmp(mode, "steam-", 6)) {
+        g_steam = 1;
+        if (!strcmp(mode, "steam-join")) {
+            if (!GetEnvironmentVariableA("AIC_COOP_PEER_STEAM", buf, sizeof buf)) buf[0] = 0;
+            g_steam_peer = !strcmp(buf, "self") ? 1 : _strtoui64(buf, NULL, 10);
+            if (!g_steam_peer) logf_("net: steam-join needs AIC_COOP_PEER_STEAM=<SteamID64>");
+        }
+        logf_("net: Steam P2P transport (%s), waiting for Steam", mode);
+        return;
+    }
     int port = is_p1 ? 45500 : 45501;
     const char *peer = is_p1 ? "127.0.0.1:45501" : "127.0.0.1:45500";
     if (!strcmp(mode, "host")) { port = 45500; peer = NULL; g_learn_peer = 1; }   /* reply to whoever joins */
@@ -104,7 +121,21 @@ static void net_init(void) {
     logf_("net: bind %d -> %s, peer %s -> %s", port, b == 0 ? "ok" : "FAIL", peer, g_peer_fixed ? "resolved" : "UNRESOLVED");
 }
 
+static void steam_up(void) {
+    if (steamnet_self()) return;
+    if (!steamnet_try_init(g_steam_peer == 1 ? 0 : g_steam_peer, logf_)) return;
+    if (g_steam_peer == 1) steamnet_set_peer(steamnet_self());   /* "self": loopback test on one account */
+    if (!g_name_set && steamnet_persona()[0]) lstrcpynA(g_name, steamnet_persona(), sizeof g_name);
+    char p[MAX_PATH + 64]; snprintf(p, sizeof p, "%s\\coop_logs\\my_steam_id.txt", g_dir);
+    FILE *f = fopen(p, "w"); if (f) { fprintf(f, "%llu\n", (unsigned long long)steamnet_self()); fclose(f); }
+}
+
 static void net_send(const Cam *c) {
+    if (g_steam) {
+        PresencePkt k; proto_fill(&k, ++g_tx, c->p, c->q, c->ok == 2, g_name);
+        if (!steamnet_send(&k, sizeof k)) g_tx--;
+        return;
+    }
     if (g_sock == INVALID_SOCKET || !g_peer_fixed) return;
     PresencePkt k; proto_fill(&k, ++g_tx, c->p, c->q, c->ok == 2, g_name);
     sendto(g_sock, (const char *)&k, sizeof k, 0, (struct sockaddr *)&g_peer_addr, sizeof g_peer_addr);
@@ -112,11 +143,12 @@ static void net_send(const Cam *c) {
 
 static void net_recv(void) {
     for (;;) {
-        PresencePkt k; struct sockaddr_in from; int fl = sizeof from;
-        int n = recvfrom(g_sock, (char *)&k, sizeof k, 0, (struct sockaddr *)&from, &fl);
+        PresencePkt k; struct sockaddr_in from; int fl = sizeof from, n;
+        if (g_steam) n = steamnet_recv(&k, sizeof k);
+        else n = recvfrom(g_sock, (char *)&k, sizeof k, 0, (struct sockaddr *)&from, &fl);
         if (n <= 0) return;
         if (!proto_check(&k, n)) continue;
-        if (g_learn_peer && (!g_peer_fixed || from.sin_addr.s_addr != g_peer_addr.sin_addr.s_addr || from.sin_port != g_peer_addr.sin_port)) {
+        if (!g_steam && g_learn_peer && (!g_peer_fixed || from.sin_addr.s_addr != g_peer_addr.sin_addr.s_addr || from.sin_port != g_peer_addr.sin_port)) {
             g_peer_addr = from; g_peer_fixed = 1;   /* host: talk back to the joiner (latest address wins, handles NAT rebinding) */
             char ip[32]; inet_ntop(AF_INET, &from.sin_addr, ip, sizeof ip);
             logf_("net: peer joined from %s:%u", ip, ntohs(from.sin_port));
@@ -146,7 +178,6 @@ static BOOL CALLBACK find_game(HWND h, LPARAM lp) {
 static int g_fwd_sign = 1;
 static ViewMark g_mark;               /* last drawn marker, for the log (benign race: log only) */
 static volatile DWORD g_mark_t;
-static char g_dir[MAX_PATH];
 
 static void draw(HDC dc, int W, int H) {
     RECT all = {0, 0, W, H};
@@ -160,6 +191,11 @@ static void draw(HDC dc, int W, int H) {
     if (!live) {
         snprintf(line, sizeof line, "CO-OP: waiting for %s...", pe.valid ? pe.name : "partner");
         SetTextColor(dc, RGB(200, 200, 200)); TextOutA(dc, 12, 10, line, (int)strlen(line));
+        if (g_steam) {
+            if (steamnet_self()) snprintf(line, sizeof line, "Your Steam ID: %llu  (your friend joins with it)", (unsigned long long)steamnet_self());
+            else snprintf(line, sizeof line, "Connecting to Steam...");
+            TextOutA(dc, 12, 34, line, (int)strlen(line));
+        }
         return;
     }
     if (!me.ok) {
@@ -278,6 +314,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
         if (c.ok != was_ok) { logf_("camera record: %s", c.ok == 2 ? "valid (quat ok)" : c.ok == 1 ? "signature ok, quat INVALID" : "not available"); was_ok = c.ok; }
         EnterCriticalSection(&g_cs); g_me = c; LeaveCriticalSection(&g_cs);
         DWORD now = GetTickCount();
+        if (g_steam) { steam_up(); steamnet_poll(); }
         if (c.ok) net_send(&c);
         net_recv();
         {
@@ -297,6 +334,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
             fflush(g_csv); last_csv = now;
         }
         if (now - last_stat >= 5000) {
+            if (g_steam) logf_("steam: self=%llu peer=%llu", (unsigned long long)steamnet_self(), (unsigned long long)steamnet_peer());
             logf_("stat: tx=%u rx=%u me=%d (%.2f %.2f %.2f) q=(%.3f %.3f %.3f %.3f) peer=%d age=%ld (%.2f %.2f %.2f)", g_tx, g_rx, c.ok,
                   c.p[0], c.p[1], c.p[2], c.q[0], c.q[1], c.q[2], c.q[3],
                   g_peer.valid, g_peer.valid ? (long)(now - g_peer.t_ms) : -1L, g_peer.p[0], g_peer.p[1], g_peer.p[2]);
@@ -316,7 +354,7 @@ static void init(HMODULE self) {
     g_pid = GetCurrentProcessId();
     char b[64];
     if (GetEnvironmentVariableA("AIC_PROFILE", b, sizeof b) && b[0]) lstrcpynA(g_profile, b, sizeof g_profile);
-    if (GetEnvironmentVariableA("AIC_COOP_NAME", b, sizeof b) && b[0]) lstrcpynA(g_name, b, sizeof g_name);
+    if (GetEnvironmentVariableA("AIC_COOP_NAME", b, sizeof b) && b[0]) { lstrcpynA(g_name, b, sizeof g_name); g_name_set = 1; }
     else lstrcpynA(g_name, g_profile, sizeof g_name);
     char dir[MAX_PATH]; GetModuleFileNameA(self, dir, MAX_PATH);
     char *s = strrchr(dir, '\\'); if (s) *s = 0;

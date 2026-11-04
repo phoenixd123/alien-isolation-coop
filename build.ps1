@@ -20,11 +20,20 @@ try { & .\harness.exe; $rc = $LASTEXITCODE } finally { Pop-Location }
 if ($rc) { throw "steamwrap offline test failed" }
 
 # --- coopnet + its tests (wire protocol over real UDP, projection math)
-Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" -lws2_32 -lgdi32 -luser32
+Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" -lws2_32 -lgdi32 -luser32
 Z -O2 -Wall -Wextra -o "$out\proto_test.exe" "$root\coopnet\test\proto_test.c" -lws2_32
 & "$out\proto_test.exe"; if ($LASTEXITCODE) { throw "proto_test failed" }
 Z -O2 -Wall -Wextra -o "$out\view_test.exe" "$root\coopnet\test\view_test.c"
 & "$out\view_test.exe"; if ($LASTEXITCODE) { throw "view_test failed" }
+# Steam P2P transport against a fake steam_api that checks the MSVC argument layout
+$st = Join-Path $out "stest"
+if (Test-Path $st) { Remove-Item -Recurse -Force $st }
+New-Item -ItemType Directory -Force $st | Out-Null
+Z -shared -O2 -o "$st\steam_api_real.dll" "$root\coopnet\test\fake_steam.c"
+Z -O2 -Wall -Wextra -o "$st\steamnet_test.exe" "$root\coopnet\test\steamnet_test.c" "$root\coopnet\steamnet.c"
+Push-Location $st
+try { & .\steamnet_test.exe; $rc = $LASTEXITCODE } finally { Pop-Location }
+if ($rc) { throw "steamnet_test failed" }
 
 # --- player package
 $pkg = Join-Path $out "alien-isolation-coop"
