@@ -23,7 +23,7 @@ with the [coop-anything](https://github.com/cranebeaker/coop-anything) playbook.
 | **Host / join over Steam** (by Steam ID, no IP, no port forwarding) | ✅ tested in game with the real Steam client (loopback to own ID, 1168/1168 packets; failed-connect callback). Two different accounts: not tested yet |
 | Install / uninstall script | ✅ tested on a fake game folder |
 | Two different PCs over the internet | ⚠️ not tested yet. Use the Steam mode; the UDP mode needs UDP 45500 open on the host |
-| A visible 3D character for your friend | ❌ not built. The marker is a 2D overlay and shows through walls |
+| **A 3D body for your friend** in your world (an NPC that walks where they walk; the alien can see it) | ⚠️ works in the airport level only (two copies on one PC, below). Each level needs a one-time level edit (`levelmod drivenpc`), which the installer doesn't do yet |
 | **Doors**: a door your friend opens opens for you too (and closes on its own) | ✅ tested in game (two copies, one PC) |
 | **Items**: an item your friend picks up disappears from your world (you don't get a copy) | ✅ tested in game; the pickup was started by the test tool, not by aiming at it |
 | **Story**: mission steps your friend reaches run in your game too (your own mission script continues) | ✅ tested in game on one mission step (M04 crowbar); not a whole mission |
@@ -241,6 +241,22 @@ sent and received matched (tx 1874, rx 1872 at the end).
   dead). It worked in every test; it is still a call from outside the game thread.
 - At level load each game reports doors that the save left open; harmless, the other game opens them too.
 
+## Partner body (3D)
+
+Characters added through a level file are never spawned by the engine. That was tried twice, with a full model
+setup the second time. So the partner body is an NPC the level already has: in the airport, the mission's
+`scared_civvie_01`. `levelmod drivenpc <COMMANDS.PAK> <composite> <npc>` adds four entities next to it, with fixed
+IDs: a `PositionMarker` with a magic position, a `CMD_GoTo` to that marker, a `TriggerBindCharacter` binding the
+command to the NPC, and a 0.25 s `LogicDelay` loop. When the level loads, coopnet (`puppet.c`):
+1. moves the NPC's spawn position (its parameter block in memory) to the partner;
+2. calls `spawn` on its `Character` and starts the loop;
+3. writes the partner's feet into the marker 20 times a second, so the NPC walks after them.
+
+Tested 2026-11-05 (HAB_AIRPORT, two copies on one PC, bot-driven):
+- The body spawned at the partner and followed them: partner at (37.7, -12.8), body at (38.2, -12.4).
+- It is visible in the other player's view.
+- A body spawned on top of a standing player nudges them aside.
+
 ## How world sync works
 
 Cathode runs level scripts as messages: "run method M on entity E". Every entity is named by a
@@ -265,7 +281,12 @@ sent back. These archetypes have the same IDs in every story level. `AIC_SYNC=0`
 ## Roadmap
 
 1. Test across two PCs with two Steam accounts (needs two people or two machines).
-2. A visible character puppet instead of the overlay marker.
+2. Partner body in every level: pick an NPC per level, run `levelmod drivenpc` from the installer (the player's own
+   level files, backed up), and respawn the body next to the partner when they get too far ahead.
+3. One shared alien, on top of the partner body. The host's alien hunts both players: it sees the joiner's body. The
+   joiner's alien is driven to the host's alien's position the same way the body is. A kill on the joiner's body in
+   the host's game becomes a death for the joiner. Test on the Survivor Mode map, where the alien is out from the
+   start.
 3. The alien: load a save where it is present (M06 or later). Confirm its character-table tag
    (`chars:` lines, guessed 3 = `ALLIANCE_GROUP.ALIEN`; the airport save's 5 and 7 fit CIVILIAN and
    DEAD). Then check whether writing the record moves it (`AIC_ALIEN_PIN=1`); if not, find the

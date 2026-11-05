@@ -64,6 +64,15 @@ static class P {
             c.Utils.SetEntityName(root, partner, "COOP_Partner");
             partner.AddParameter("position", new cTransform(new System.Numerics.Vector3(x, y, z), new System.Numerics.Vector3(0, 0, 0)));
             partner.AddParameter("spawn_on_reset", new cBool(true));
+            // Without a character model the engine spawns nothing: copy what the story's civilians set
+            // (HAB_AIRPORT M04_Pt01 scared_civvie_01).
+            partner.AddParameter("custom_character_type", new cEnum(EnumType.CUSTOM_CHARACTER_TYPE, 2));
+            partner.AddParameter("named_custom_character", new cString("CREW_MEDICAL"));
+            partner.AddParameter("dialogue_voice", new cEnum(EnumType.DIALOGUE_VOICE_ACTOR, 2));
+            partner.AddParameter("disable_looting", new cBool(true));
+            partner.AddParameter("is_cinematic", new cBool(false));
+            partner.AddParameter("holster_weapon_on_start", new cBool(true));
+            partner.AddParameter("Debug_name", new cString("COOP_Partner"));
 
             var marker = root.AddFunction(FunctionType.PositionMarker);
             c.Utils.SetEntityName(root, marker, "COOP_Target");
@@ -92,6 +101,42 @@ static class P {
 
             if (!c.Save()) { Console.WriteLine("SAVE FAILED"); return 4; }
             Console.WriteLine($"added partner ({a[2]}) at {x},{y},{z}; saved {a[1]}");
+            return 0;
+        }
+        if (a[0] == "drivenpc") {
+            // drivenpc <COMMANDS.PAK> <composite> <npc entity name>
+            // Lets the co-op mod move an NPC the level already has (characters added through the level file are
+            // not spawned by the engine). Adds to <composite>, next to the NPC: a PositionMarker seeded with a magic
+            // position (coopnet overwrites it in memory), CMD_GoTo -> marker, a TriggerBindCharacter binding the
+            // command to the NPC, and a LogicDelay loop re-applying it every 0.25 s once triggered.
+            var c = Load(a[1]);
+            var comp = c.Entries.FirstOrDefault(x => x.name == a[2]) ?? throw new Exception("no composite " + a[2]);
+            if (comp.functions.Any(f => c.Utils.GetEntityName(comp, f) == "COOP_Target")) { Console.WriteLine("already added"); return 3; }
+            var npc = comp.functions.FirstOrDefault(f => c.Utils.GetEntityName(comp, f) == a[3]) ?? throw new Exception("no entity " + a[3]);
+            var marker = comp.AddFunction(FunctionType.PositionMarker);
+            marker.shortGUID = ShortGuidUtils.Generate("COOP_Target");   // fixed ID: the mod addresses it by this
+            c.Utils.SetEntityName(comp, marker, "COOP_Target");
+            marker.AddParameter("position", new cTransform(new System.Numerics.Vector3(1234.5f, 987.25f, 4321.75f), new System.Numerics.Vector3(0, 0, 0)));
+            var go = comp.AddFunction(FunctionType.CMD_GoTo);
+            go.shortGUID = ShortGuidUtils.Generate("COOP_GoTo");   // fixed ID: the mod addresses it by this
+            c.Utils.SetEntityName(comp, go, "COOP_GoTo");
+            go.AddParameter("move_type", new cEnum(EnumType.MOVE, 3));
+            go.AddParameter("override_all_ai", new cBool(true));
+            go.AddParameter("arrived_radius", new cFloat(0.5f));
+            go.AddParameterLink("Waypoint", marker, "reference");
+            var bind = comp.AddFunction(FunctionType.TriggerBindCharacter);
+            bind.shortGUID = ShortGuidUtils.Generate("COOP_Bind");   // fixed ID: the mod addresses it by this
+            c.Utils.SetEntityName(comp, bind, "COOP_Bind");
+            bind.AddParameterLink("characters", npc, "npc_reference");
+            bind.AddParameterLink("bound_trigger", go, "apply_start");
+            var loop = comp.AddFunction(FunctionType.LogicDelay);
+            loop.shortGUID = ShortGuidUtils.Generate("COOP_Loop");   // fixed ID: the mod addresses it by this
+            c.Utils.SetEntityName(comp, loop, "COOP_Loop");
+            loop.AddParameter("delay", new cFloat(0.25f));
+            loop.AddParameterLink("on_delay_finished", bind, "trigger");
+            loop.AddParameterLink("on_delay_finished", loop, "trigger");
+            if (!c.Save()) { Console.WriteLine("SAVE FAILED"); return 4; }
+            Console.WriteLine($"drive logic for {a[3]} added to {a[2]}; saved {a[1]}");
             return 0;
         }
         if (a[0] == "ids") {
