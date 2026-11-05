@@ -48,6 +48,8 @@
 
 int probe_install(const char *dir, const char *profile, void (*logf)(const char *, ...));
 void probe_set_gameover_cb(int (*cb)(uint32_t hb, const uint32_t *msg));
+void probe_set_tick_cb(void (*cb)(void));
+void probe_set_swallow(int (*cb)(uint32_t method, uint32_t eid, uint32_t type));
 void puppet_tick(int in_level, int peer_live, const float peer_cam_pos[3], void (*logf)(const char *, ...));
 
 static FILE *g_log, *g_csv;
@@ -101,6 +103,8 @@ static int g_couch, g_seat = -1, g_is_host;
 
 /* co-op death (life.c); all under g_cs */
 static Life g_life;
+static volatile LONG g_go_held, g_go_release;
+static volatile LONG g_follow_on;   /* spectate camera follows the partner (see follow_step) */
 static DWORD g_dead_t, g_load_until;  /* when we died; press "Load Current Save" until then (0 = no) */
 static float g_dead_pos[3]; static int g_dead_pos_ok, g_qa_dead;
 static volatile LONG g_life_dirty;
@@ -225,6 +229,7 @@ static int on_gameover(uint32_t hb, const uint32_t *msg) {
     /* Partner already down: pick "Load Current Save" as soon as the menu is up. Solo (no partner): the menu is the
        player's, as in the normal game. */
     if (!wait && g_life.peer_known && life_peer_live(&g_life, now) && !g_qa_dead) g_load_until = now + 45000;
+    if (!wait) InterlockedExchange(&g_go_release, 1);
     LeaveCriticalSection(&g_cs);
     if (was == LIFE_DEAD) return 0;
     InterlockedExchange(&g_life_dirty, 1);
@@ -266,19 +271,24 @@ static void life_step(int give_up, const Cam *c) {
     EnterCriticalSection(&g_cs);
     int before = g_life.state;
     /* where the body lies: the camera drops to the floor in the first seconds after death */
-    if ((before == LIFE_DEAD || g_load_until) && !g_dead_pos_ok && now - g_dead_t > 3000 && c->ok) {
+    /* While following, our camera record holds the partner's pose: no respawn detection then. Once following
+       stops, the record shows our death camera again; take the death spot from it 0.7 s later. */
+    static DWORD capture_t;
+    if (g_follow_on) { g_dead_pos_ok = 0; capture_t = now + 700; }
+    else if ((before == LIFE_DEAD || g_load_until) && !g_dead_pos_ok && now - g_dead_t > 3000 && (int32_t)(now - capture_t) >= 0 && c->ok) {
         memcpy(g_dead_pos, c->p, 12); g_dead_pos_ok = 1;
     }
     int moved = 0;
-    if (g_dead_pos_ok && c->ok) {
+    if (g_dead_pos_ok && c->ok && !g_follow_on) {
         float dx = c->p[0] - g_dead_pos[0], dy = c->p[1] - g_dead_pos[1], dz = c->p[2] - g_dead_pos[2];
         moved = dx * dx + dy * dy + dz * dz > 0.25f;
     }
     int self_respawn = moved && before == LIFE_DEAD;
-    if (self_respawn) life_on_respawn(&g_life, now);
+    if (self_respawn) { life_on_respawn(&g_life, now); InterlockedExchange(&g_go_release, 1); }
     if (moved) { g_dead_pos_ok = 0; g_load_until = 0; }
     int rel = life_tick(&g_life, now, give_up);
     if (rel && !g_qa_dead) g_load_until = now + 45000;
+    if (rel) InterlockedExchange(&g_go_release, 1);
     int died = g_life.ev_peer_died, both = g_life.ev_both_down;
     g_life.ev_peer_died = g_life.ev_both_down = 0;
     if (died) g_flash_t = now;
@@ -297,6 +307,178 @@ static void life_step(int give_up, const Cam *c) {
     }
     if (died) { sfx_play(SFX_STING); logf_("life: partner died"); }
     if (both) logf_("life: both down, back to the checkpoint");
+}
+
+/* ---------- spectate camera: follow the partner in first person ----------
+ * While we are dead and the partner is alive, our own game renders from the partner's camera. Tested in game
+ * 2026-11-04 (HAB_AIRPORT, two copies): the player camera is rebuilt from the character every frame, so writing it does
+ * nothing; but while dead the death camera (a script CameraResource, Archetypes\Script\Cameras\KillCamera) is active,
+ * and an active script camera renders from its camera records. We find those records (layout below) at the death
+ * camera's position and write the partner's pose (presence packets) into them from a 1 ms thread and at every script
+ * dispatch. The game-over menu is held meanwhile (show_go_hook) and the death blur and fade are kept off (swallow_cb).
+ */
+static float g_follow[7];            /* q[4], p[3]; written by the net thread, read by writers (tearing is harmless) */
+static int g_follow_mode = 1;        /* AIC_SPECTATE_CAM=0 turns camera follow off (bio-monitor / thumbnail instead) */
+static int g_nofade;                 /* swallow TriggerDeath while we spectate (no fade to black); AIC_DEATH_NOFADE=0 keeps it */
+
+/* Camera records (quat x,y,z,w | pos x,y,z | fov | near 0.05 | far 1000), found by layout. Found in game 2026-11-04:
+   an active script camera (CameraResource) keeps several such records (current, previous, blend); writing a pose into
+   all of them every frame makes the game render from that pose. The death camera is one of them while you are dead. */
+#define NCAMREC 16
+static uint32_t g_camrec[NCAMREC]; static volatile LONG g_ncamrec;
+static int camrec_ok(const float *r) {
+    float n = r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3];
+    if (!(n > 0.98f && n < 1.02f)) return 0;
+    for (int i = 4; i < 7; i++) if (!(r[i] == r[i]) || fabsf(r[i]) > 10000.f) return 0;
+    return r[7] >= 5.f && r[7] <= 120.f && r[8] == 0.05f && r[9] == 1000.0f;
+}
+static int near3(const float *a, const float *b, float tol) {
+    return fabsf(a[0] - b[0]) < tol && fabsf(a[1] - b[1]) < tol && fabsf(a[2] - b[2]) < tol;
+}
+/* Records at the death camera (within 1 m of `pose`) or already holding the pose we write; merged with the list. */
+static void camrec_scan(const float pose[7]) {
+    static float buf[1 << 18];
+    uint32_t found[NCAMREC]; int n = 0;
+    MEMORY_BASIC_INFORMATION m;
+    for (uintptr_t a = 0x10000; a < 0x7FFF0000 && n < NCAMREC && VirtualQuery((LPCVOID)a, &m, sizeof m); a = (uintptr_t)m.BaseAddress + m.RegionSize) {
+        if (m.State != MEM_COMMIT || m.Type != MEM_PRIVATE || (m.Protect & (PAGE_GUARD | PAGE_NOACCESS)) || !(m.Protect & PAGE_READWRITE)) continue;
+        for (uintptr_t o = 0; o < m.RegionSize && n < NCAMREC; o += sizeof buf - 64) {
+            size_t len = m.RegionSize - o < sizeof buf ? m.RegionSize - o : sizeof buf;
+            SIZE_T got = 0;
+            if (!ReadProcessMemory(GetCurrentProcess(), (LPCVOID)((uintptr_t)m.BaseAddress + o), buf, len, &got)) continue;
+            size_t nf = got / 4;
+            for (size_t i = 9; i < nf && n < NCAMREC; i++)
+                if (buf[i] == 1000.0f && buf[i - 1] == 0.05f && camrec_ok(buf + i - 9) &&
+                    (near3(buf + i - 5, pose + 4, 1.0f) || (g_follow_on && near3(buf + i - 5, g_follow + 4, 0.01f))))
+                    found[n++] = (uint32_t)((uintptr_t)m.BaseAddress + o + (i - 9) * 4);
+            if (len < sizeof buf) break;
+        }
+    }
+    if (n > 12) { logf_("spectate: %d camera records near the death camera, too many: not writing", n); n = 0; InterlockedExchange(&g_ncamrec, 0); return; }
+    int have = g_ncamrec;
+    for (int i = 0; i < n && have < NCAMREC; i++) {
+        int dup = 0;
+        for (int j = 0; j < have; j++) if (g_camrec[j] == found[i]) dup = 1;
+        if (!dup) g_camrec[have++] = found[i];
+    }
+    InterlockedExchange(&g_ncamrec, have);
+}
+static void follow_write(void) {
+    if (!g_follow_on) return;
+    float v[10]; memcpy(v, g_follow, 28); v[7] = 47.0f; v[8] = 0.05f; v[9] = 1000.0f;
+    int n = g_ncamrec;
+    for (int i = 0; i < n; i++) {
+        float cur[10];
+        if (!safe_read(g_camrec[i], cur, sizeof cur) || cur[8] != 0.05f || cur[9] != 1000.0f) continue;   /* gone or reused */
+        memcpy((void *)(uintptr_t)g_camrec[i], v, 32);
+    }
+}
+static void menu_tick(void);
+static void menu_fallback(void);
+static void game_tick_cb(void) { follow_write(); menu_tick(); }
+static DWORD WINAPI follow_thread(LPVOID p) {
+    (void)p;
+    timeBeginPeriod(1);
+    while (!g_quit) { if (g_follow_on) { follow_write(); Sleep(1); } else Sleep(20); }
+    return 0;
+}
+
+/* Net thread: follow the partner while we are dead and they are alive and visible. */
+static void follow_step(void) {
+    static int was;
+    EnterCriticalSection(&g_cs);
+    DWORD now = GetTickCount();
+    int live = g_peer.valid && now - g_peer.t_ms < 1500 && (g_peer.p[0] != 0.f || g_peer.p[2] != 0.f);
+    int on = g_follow_mode && g_life.state == LIFE_DEAD && g_life.peer_state == LIFE_ALIVE && live;
+    if (on) { memcpy(g_follow, g_peer.q, 16); memcpy(g_follow + 4, g_peer.p, 12); }
+    LeaveCriticalSection(&g_cs);
+    static float death_pose[7]; static DWORD t_on; static int scans;
+    if (on && !was) {
+        Cam me; read_cam(&me);
+        memcpy(death_pose, me.raw, 28);
+        InterlockedExchange(&g_ncamrec, 0);
+        camrec_scan(death_pose);
+        t_on = GetTickCount(); scans = 1;
+        logf_("spectate: %ld camera records at the death camera (%.2f %.2f %.2f)", (long)g_ncamrec, death_pose[4], death_pose[5], death_pose[6]);
+    }
+    if (on && was && scans < 4 && GetTickCount() - t_on > (scans == 1 ? 500u : scans == 2 ? 1500u : 3000u)) {
+        long before = g_ncamrec;
+        camrec_scan(death_pose); scans++;
+        if (g_ncamrec != before) logf_("spectate: now %ld camera records", (long)g_ncamrec);
+    }
+    if (on != was) {
+        InterlockedExchange(&g_follow_on, on);
+        logf_("spectate: %s the partner's camera", on ? "following" : "stopped following");
+        was = on;
+    }
+}
+
+/* While spectating, keep the death effects off our screen: TriggerDeath on Health_Damage_Death (fade to black,
+   vignette, colour), and the death depth-of-field in Global\systemic_post_processing ("Death DOF" .. "Death DOF_3",
+   "Time to Death"), which otherwise blurs the partner's view. Game thread. */
+static int swallow_cb(uint32_t method, uint32_t eid, uint32_t type) {
+    if (!g_nofade) return 0;
+    int effect = (method == 0xae498037u && type == 0x3f4defe1u) ||
+                 (method == 0x830c2104u && (eid == 0xbcf22095u || eid == 0xaf7fd498u || eid == 0x97e51b56u || eid == 0xbcd40132u ||
+                                            eid == 0x006bbdb7u));
+    if (!effect) return 0;
+    /* The death DOF starts ~0.3 s before TriggerDeath (from the death monitor), so "about to spectate" counts too:
+       the partner is connected and alive. */
+    EnterCriticalSection(&g_cs);
+    DWORD now = GetTickCount();
+    int s = g_life.state == LIFE_DEAD ||
+            (g_follow_mode && g_life.state == LIFE_ALIVE && life_peer_live(&g_life, now) && g_life.peer_state == LIFE_ALIVE);
+    LeaveCriticalSection(&g_cs);
+    return s;
+}
+
+/* The game-over menu. Found 2026-11-04: the UI state class's vtable (no RTTI) at exe 0x1300200 has "show game over"
+   at slot 0x1300224 (FUN_00833af0: hides the HUD, opens the "game_over_menu" movie) and "hide" right after it
+   (0x1300228, FUN_00853830); nothing calls it directly. While we spectate, the call is held, so the world keeps
+   rendering (through the follow camera) instead of a black menu. When both are down it runs on the game thread. */
+typedef void(__attribute__((thiscall)) *show_go_fn)(void *self);
+static show_go_fn g_show_go;
+static void *volatile g_go_self;
+static int g_hold_menu = 1;      /* AIC_HOLD_MENU=0: show the menu at once (old behaviour) */
+static void __attribute__((thiscall)) show_go_hook(void *self) {
+    int hold = 0;
+    if (g_hold_menu) {
+        EnterCriticalSection(&g_cs);
+        hold = g_life.state == LIFE_DEAD;
+        LeaveCriticalSection(&g_cs);
+    }
+    if (hold) {
+        g_go_self = self; InterlockedExchange(&g_go_held, 1);
+        logf_("life: game-over menu held while spectating");
+        return;
+    }
+    g_show_go(self);
+}
+static void menu_show_now(const char *who) {
+    if (g_go_release && InterlockedExchange(&g_go_held, 0)) {
+        InterlockedExchange(&g_go_release, 0);
+        g_show_go(g_go_self);
+        logf_("life: game-over menu shown (%s)", who);
+    } else if (g_go_release && !g_go_held) InterlockedExchange(&g_go_release, 0);
+}
+static void menu_tick(void) { menu_show_now("game thread"); }
+/* Net thread: if no script dispatch ran the release within 1 s (the game may stop dispatching while dead), show the
+   menu from here. */
+static void menu_fallback(void) {
+    static DWORD since;
+    if (!g_go_release || !g_go_held) { since = 0; return; }
+    if (!since) since = GetTickCount();
+    else if (GetTickCount() - since > 1000) { menu_show_now("net thread"); since = 0; }
+}
+static void hook_gameover_ui(void) {
+    uintptr_t base = (uintptr_t)GetModuleHandleW(NULL);
+    uint32_t *slot = (uint32_t *)(base + (0x01300224u - 0x400000u));
+    uint32_t want = (uint32_t)(base + (0x00833af0u - 0x400000u));
+    if (*slot != want) { logf_("life: game-over vtable slot mismatch (%08x), menu not held", *slot); return; }
+    DWORD old; VirtualProtect(slot, 4, PAGE_READWRITE, &old);
+    g_show_go = (show_go_fn)(uintptr_t)*slot; *slot = (uint32_t)(uintptr_t)show_go_hook;
+    VirtualProtect(slot, 4, old, &old);
+    logf_("life: game-over menu hook installed");
 }
 
 /* ---------- alien and motion contacts ---------- */
@@ -522,6 +704,13 @@ static void draw(HDC dc, int W, int H) {
     int linked = live || life_peer_live(&L, now);
     int spect = L.state == LIFE_DEAD || g_spec_test;
 
+    if (spect && g_follow_on) {   /* ---- you are dead: your game shows the partner's view ---- */
+        RECT band = {0, 0, W, 40};
+        HBRUSH bb = CreateSolidBrush(RGB(16, 4, 4)); FillRect(dc, &band, bb); DeleteObject(bb);
+        snprintf(line, sizeof line, "SPECTATING %s", pe.valid ? pe.name : "your partner");
+        text_c(dc, W / 2, 9, RGB(230, 60, 50), line);
+        return;
+    }
     if (spect) {   /* ---- you are dead: watch the partner ---- */
         RECT band = {0, 0, W, 64};
         HBRUSH bb = CreateSolidBrush(RGB(16, 4, 4)); FillRect(dc, &band, bb); DeleteObject(bb);
@@ -638,6 +827,14 @@ static void maybe_dump(int W, int H) {
     SelectObject(mem, of); DeleteObject(f); SelectObject(mem, old); DeleteObject(bm); DeleteDC(mem);
 }
 
+/* Partner's presence (camera) packets are arriving: the camera can follow them. */
+static int now_live_peer(void) {
+    EnterCriticalSection(&g_cs);
+    int live = g_peer.valid && GetTickCount() - g_peer.t_ms < 1500;
+    LeaveCriticalSection(&g_cs);
+    return live;
+}
+
 /* Couch spectating: the partner's game window on this PC (largest visible non-tool window of its process). */
 typedef struct { DWORD pid; HWND best; LONG area; } FindPid;
 static BOOL CALLBACK find_pid_win(HWND h, LPARAM lp) {
@@ -689,7 +886,7 @@ static DWORD WINAPI overlay_thread(LPVOID p) {
             else if (GetTickCount() - f9_since > 2000) { InterlockedExchange(&g_give_up, 1); f9_since = 0; }
         } else f9_since = 0;
 
-        int want = !spect ? 0 : ppid ? 2 : 1;
+        int want = !spect || g_follow_on || (g_follow_mode && now_live_peer()) ? 0 : ppid ? 2 : 1;
         if (want == 2 && src && !IsWindow(src)) want = 1;
         if (want != spec_mode) {
             if (thumb) { DwmUnregisterThumbnail(thumb); thumb = NULL; }
@@ -764,6 +961,8 @@ static DWORD WINAPI net_thread(LPVOID p) {
         send_life(0);
         net_recv();
         life_step(InterlockedExchange(&g_give_up, 0) != 0, &c);
+        follow_step();
+        menu_fallback();
         if (g_life_test_ms && now - g_t0 >= g_life_test_ms) {   /* QA: a death without dying (AIC_LIFE_TEST=<s>) */
             uint32_t m[10] = {0};
             g_life_test_ms = 0;
@@ -838,6 +1037,13 @@ static void init(HMODULE self) {
     life_init(&g_life, GetTickCount());
     sfx_init();
     probe_set_gameover_cb(on_gameover);
+    if (GetEnvironmentVariableA("AIC_SPECTATE_CAM", b, sizeof b) && b[0] == '0') g_follow_mode = 0;
+    g_nofade = !(GetEnvironmentVariableA("AIC_DEATH_NOFADE", b, sizeof b) && b[0] == '0');   /* no fade to black while spectating */
+    g_hold_menu = !(GetEnvironmentVariableA("AIC_HOLD_MENU", b, sizeof b) && b[0] == '0');
+    probe_set_tick_cb(game_tick_cb);
+    probe_set_swallow(swallow_cb);
+    hook_gameover_ui();
+    CloseHandle(CreateThread(NULL, 0, follow_thread, NULL, 0, NULL));
     logf_("coopnet up: profile=%s name=%s fwd_sign=%d couch_seat=%d alien_tag=%d pin=%d", g_profile, g_name, g_fwd_sign,
           g_couch ? g_seat : -1, g_alien_tag, g_alien_pin);
     probe_install(g_dir, g_profile, logf_);

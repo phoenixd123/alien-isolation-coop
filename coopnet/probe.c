@@ -24,6 +24,12 @@ static int g_sync;   /* world sync (worldsync.c) on; AIC_SYNC=0 turns it off */
 #define C_HEALTH_DMG_DEATH 0x3f4defe1u
 static int (*g_gameover_cb)(uint32_t hb, const uint32_t *msg);
 void probe_set_gameover_cb(int (*cb)(uint32_t hb, const uint32_t *msg)) { g_gameover_cb = cb; }
+/* Called on the game thread at every script dispatch (spectate camera override, see coopnet.c). */
+static void (*g_tick_cb)(void);
+void probe_set_tick_cb(void (*cb)(void)) { g_tick_cb = cb; }
+/* Return 1 from this to swallow a script message (death effects while spectating, see coopnet.c). */
+static int (*g_swallow)(uint32_t method, uint32_t eid, uint32_t type);
+void probe_set_swallow(int (*cb)(uint32_t method, uint32_t eid, uint32_t type)) { g_swallow = cb; }
 
 #define RVA_CALL_METHOD 0x526680u
 static const uint8_t CM_PROLOGUE[10] = {0x55, 0x8B, 0xEC, 0x6A, 0xFF, 0x68}; /* first 6 checked; imm32 is relocated */
@@ -155,9 +161,12 @@ static uint32_t __attribute__((thiscall)) cm_hook(void *self, void *a1, void *a2
     if (g_sync) {
         const uint32_t *msg = *(const uint32_t **)a3, *hb = *(const uint32_t **)a1;
         const uint32_t *target = hb ? (const uint32_t *)(uintptr_t)hb[3] : NULL;
+        if (g_tick_cb) g_tick_cb();
         if (msg && target && g_gameover_cb && !replay_active() &&
-            ((msg[0] == SG_TRIGGERDEATH && target[4] == C_HEALTH_DMG_DEATH) || (msg[0] == SG_TRIGGER_ && target[4] == T_GAMEOVER)))
+            ((msg[0] == SG_TRIGGERDEATH && target[4] == C_HEALTH_DMG_DEATH) || (msg[0] == SG_TRIGGER_ && target[4] == T_GAMEOVER))) {
             g_gameover_cb((uint32_t)(uintptr_t)hb, msg);
+        }
+        if (msg && target && g_swallow && !replay_active() && g_swallow(msg[0], target[3], target[4])) return 1;
         ws_on_call(msg, target);
     }
     uint32_t r = g_cm_tramp(self, a1, a2, a3);
