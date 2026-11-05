@@ -14,9 +14,14 @@
 
 static int g_sync;   /* world sync (worldsync.c) on; AIC_SYNC=0 turns it off */
 
-/* Co-op death (life.c): coopnet.c decides whether a GameOver trigger runs now or is held back. */
-#define SG_TRIGGER_  0xd9d0ca29u
-#define T_GAMEOVER   0x2f97adeeu
+/* Co-op death (life.c): tell coopnet.c when the player dies. Observed 2026-11-04 in HAB_AIRPORT: a player death runs
+   TriggerDeath (ae498037) on the Required_Assets\Health_Damage_Death instance (type 3f4defe1, present in every
+   level); the engine then shows its own game-over menu and waits there. The GameOver script entity only runs for
+   "you killed an ally" (Global\HolsterWeaponOnKillAllied). Both count as a death. Nothing is held back. */
+#define SG_TRIGGER_       0xd9d0ca29u
+#define SG_TRIGGERDEATH   0xae498037u
+#define T_GAMEOVER        0x2f97adeeu
+#define C_HEALTH_DMG_DEATH 0x3f4defe1u
 static int (*g_gameover_cb)(uint32_t hb, const uint32_t *msg);
 void probe_set_gameover_cb(int (*cb)(uint32_t hb, const uint32_t *msg)) { g_gameover_cb = cb; }
 
@@ -150,9 +155,9 @@ static uint32_t __attribute__((thiscall)) cm_hook(void *self, void *a1, void *a2
     if (g_sync) {
         const uint32_t *msg = *(const uint32_t **)a3, *hb = *(const uint32_t **)a1;
         const uint32_t *target = hb ? (const uint32_t *)(uintptr_t)hb[3] : NULL;
-        if (msg && target && msg[0] == SG_TRIGGER_ && target[4] == T_GAMEOVER && !replay_active() && g_gameover_cb &&
-            g_gameover_cb((uint32_t)(uintptr_t)hb, msg))
-            return 1;   /* held: life.c runs it later through replay_post_raw */
+        if (msg && target && g_gameover_cb && !replay_active() &&
+            ((msg[0] == SG_TRIGGERDEATH && target[4] == C_HEALTH_DMG_DEATH) || (msg[0] == SG_TRIGGER_ && target[4] == T_GAMEOVER)))
+            g_gameover_cb((uint32_t)(uintptr_t)hb, msg);
         ws_on_call(msg, target);
     }
     uint32_t r = g_cm_tramp(self, a1, a2, a3);

@@ -21,7 +21,7 @@
 typedef uint32_t(__attribute__((thiscall)) *cm_fn)(void *self, void *a1, void *a2, void *a3);
 
 #define NREQ 64
-typedef struct { volatile LONG state; ReplayKey k; uint32_t hb; int has_raw; uint32_t raw[10]; uint32_t want_type; } Req;   /* 0 free, 1 resolving, 2 ready */
+typedef struct { volatile LONG state; ReplayKey k; uint32_t hb; } Req;   /* 0 free, 1 resolving, 2 ready */
 static Req g_req[NREQ];
 static HANDLE g_wake;
 static void (*g_logf)(const char *, ...);
@@ -117,47 +117,21 @@ void replay_init(void (*logf)(const char *, ...)) {
 int replay_request(const ReplayKey *k) {
     for (int i = 0; i < NREQ; i++)
         if (InterlockedCompareExchange(&g_req[i].state, -1, 0) == 0) {
-            g_req[i].k = *k; g_req[i].has_raw = 0; InterlockedExchange(&g_req[i].state, 1); SetEvent(g_wake); return 1;
+            g_req[i].k = *k; InterlockedExchange(&g_req[i].state, 1); SetEvent(g_wake); return 1;
         }
     return 0;
 }
 
 int replay_active(void) { return g_in_replay != 0; }
 
-/* Re-run a message the hook held back (a game over, see life.c), exactly as the game sent it. The target is
-   checked again just before the call: its entity must still be of `want_type` (the level may have changed). */
-int replay_post_raw(uint32_t hb, const uint32_t raw[10], uint32_t want_type) {
-    for (int i = 0; i < NREQ; i++)
-        if (InterlockedCompareExchange(&g_req[i].state, -1, 0) == 0) {
-            memset(&g_req[i].k, 0, sizeof g_req[i].k);
-            g_req[i].k.method = raw[0];
-            g_req[i].hb = hb; g_req[i].has_raw = 1; g_req[i].want_type = want_type;
-            memcpy(g_req[i].raw, raw, sizeof g_req[i].raw);
-            InterlockedExchange(&g_req[i].state, 2);
-            return 1;
-        }
-    return 0;
-}
-
 void replay_pump(void *self, cm_fn tramp, const void *cur_msg) {
     if (g_in_replay) return;
     for (int i = 0; i < NREQ; i++) {
         if (g_req[i].state != 2) continue;
         uint32_t m[10] = {0};
-        if (g_req[i].has_raw) {
-            uint32_t b[4], e[5];
-            if (!rd(g_req[i].hb, b, sizeof b) || !rd(b[3], e, sizeof e) || e[4] != g_req[i].want_type) {
-                if (g_logf) g_logf("replay: held message %08x dropped, its target is gone (hb %08x)", g_req[i].raw[0], g_req[i].hb);
-                InterlockedExchange(&g_req[i].state, 0);
-                continue;
-            }
-            memcpy(m, g_req[i].raw, sizeof m);
-            m[2] = g_req[i].hb;
-        } else {
-            m[0] = g_req[i].k.method; m[2] = g_req[i].hb;
-            if (cur_msg) m[3] = ((const uint32_t *)cur_msg)[3];   /* sender: borrow the one of the message just dispatched */
-            m[8] = 0x80000000u; m[9] = 2;
-        }
+        m[0] = g_req[i].k.method; m[2] = g_req[i].hb;
+        if (cur_msg) m[3] = ((const uint32_t *)cur_msg)[3];   /* sender: borrow the one of the message just dispatched */
+        m[8] = 0x80000000u; m[9] = 2;
         void *pm = m;
         g_in_replay = 1;
         uint32_t r = (g_req[i].k.via_hook && g_hook ? g_hook : tramp)(self, &m[2], &m[2], &pm);

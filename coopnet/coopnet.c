@@ -94,13 +94,15 @@ static Cam g_me;
 static Peer g_peer;
 static uint32_t g_rx, g_tx;
 
+static HWND g_game, g_ov;   /* the game's window and our overlay (overlay thread) */
+
 /* couch / roles */
 static int g_couch, g_seat = -1, g_is_host;
 
 /* co-op death (life.c); all under g_cs */
-#define T_GAMEOVER 0x2f97adeeu
 static Life g_life;
-static int g_held; static uint32_t g_held_hb, g_held_msg[10];
+static DWORD g_dead_t, g_load_until;  /* when we died; press "Load Current Save" until then (0 = no) */
+static float g_dead_pos[3]; static int g_dead_pos_ok, g_qa_dead;
 static volatile LONG g_life_dirty;
 static uint32_t g_peer_pid; static int g_peer_couch;
 static DWORD g_flash_t, g_both_t;      /* partner-died flash, "both down" banner */
@@ -209,16 +211,26 @@ static void on_world(const WorldPkt *k) {
 }
 
 /* ---------- co-op death ---------- */
-/* Game thread (call_method hook): a GameOver trigger is about to run. Return 1 to hold it back. */
+/* The player died (call_method hook, game thread; see probe.c). The game now waits on its own game-over menu. */
 static int on_gameover(uint32_t hb, const uint32_t *msg) {
+    (void)hb;
+    DWORD now = GetTickCount();
     EnterCriticalSection(&g_cs);
-    int hold = life_on_gameover(&g_life, GetTickCount());
-    if (hold && !g_held) { g_held = 1; g_held_hb = hb; memcpy(g_held_msg, msg, sizeof g_held_msg); }
+    int was = g_life.state;
+    if (g_dead_t && now - g_dead_t < 8000) { LeaveCriticalSection(&g_cs); return 0; }   /* the engine reports a death twice */
+    int wait = life_on_gameover(&g_life, now);
     int st = g_life.state;
+    if (was != LIFE_DEAD) { g_dead_t = now ? now : 1; g_dead_pos_ok = 0; }
+    g_qa_dead = !msg || !msg[0];
+    /* Partner already down: pick "Load Current Save" as soon as the menu is up. Solo (no partner): the menu is the
+       player's, as in the normal game. */
+    if (!wait && g_life.peer_known && life_peer_live(&g_life, now) && !g_qa_dead) g_load_until = now + 45000;
     LeaveCriticalSection(&g_cs);
+    if (was == LIFE_DEAD) return 0;
     InterlockedExchange(&g_life_dirty, 1);
-    logf_("life: game over (hb %08x) -> %s", hb, hold ? "held, spectating the partner" : st == LIFE_RESTART ? "runs: back to the checkpoint" : "runs");
-    return hold;
+    logf_("life: player died (%s) -> %s", msg && msg[0] == 0xae498037u ? "TriggerDeath" : "GameOver",
+          wait ? "waiting on the game-over menu, spectating the partner" : st == LIFE_RESTART ? "back to the checkpoint" : "?");
+    return 0;
 }
 
 static void send_life(int force) {
@@ -239,25 +251,49 @@ static void on_life(const LifePkt *k) {
     LeaveCriticalSection(&g_cs);
 }
 
-/* Net thread: run the life rules; release a held game over; turn one-shot events into sound and HUD. */
-static void life_step(int give_up) {
+/* "Load Current Save" is the game-over menu's default item. A posted Enter picks it without focus or real input
+   (tested 2026-11-04: the checkpoint loaded 3.8 s later). Pressed every 2.5 s until the camera leaves the death spot. */
+static void press_load(void) {
+    if (!g_game) return;
+    PostMessageA(g_game, WM_KEYDOWN, VK_RETURN, 1 | (0x1C << 16));
+    Sleep(60);
+    PostMessageA(g_game, WM_KEYUP, VK_RETURN, (LPARAM)(1u | (0x1Cu << 16) | (3u << 30)));
+}
+
+/* Net thread: run the life rules; go back to the checkpoint when they say so; spot a reload; sound and HUD events. */
+static void life_step(int give_up, const Cam *c) {
     DWORD now = GetTickCount();
     EnterCriticalSection(&g_cs);
     int before = g_life.state;
+    /* where the body lies: the camera drops to the floor in the first seconds after death */
+    if ((before == LIFE_DEAD || g_load_until) && !g_dead_pos_ok && now - g_dead_t > 3000 && c->ok) {
+        memcpy(g_dead_pos, c->p, 12); g_dead_pos_ok = 1;
+    }
+    int moved = 0;
+    if (g_dead_pos_ok && c->ok) {
+        float dx = c->p[0] - g_dead_pos[0], dy = c->p[1] - g_dead_pos[1], dz = c->p[2] - g_dead_pos[2];
+        moved = dx * dx + dy * dy + dz * dz > 0.25f;
+    }
+    int self_respawn = moved && before == LIFE_DEAD;
+    if (self_respawn) life_on_respawn(&g_life, now);
+    if (moved) { g_dead_pos_ok = 0; g_load_until = 0; }
     int rel = life_tick(&g_life, now, give_up);
+    if (rel && !g_qa_dead) g_load_until = now + 45000;
     int died = g_life.ev_peer_died, both = g_life.ev_both_down;
     g_life.ev_peer_died = g_life.ev_both_down = 0;
-    int post = rel && g_held; uint32_t hb = g_held_hb, msg[10]; memcpy(msg, g_held_msg, sizeof msg);
-    if (rel) g_held = 0;
     if (died) g_flash_t = now;
     if (both) g_both_t = now;
     int after = g_life.state;
+    DWORD load_until = g_load_until;
     LeaveCriticalSection(&g_cs);
     if (before != after) { InterlockedExchange(&g_life_dirty, 1); logf_("life: %d -> %d", before, after); }
-    if (post && !hb) { logf_("life: held game over released (QA death, nothing to run)"); post = 0; }
-    if (post) {
-        int ok = replay_post_raw(hb, msg, T_GAMEOVER);
-        logf_("life: running the held game over (%s)%s", ok ? "queued" : "QUEUE FULL", give_up ? ", player gave up" : "");
+    if (self_respawn) logf_("life: the player picked a save on the game-over menu");
+    if (moved && !self_respawn) logf_("life: back at the checkpoint (camera left the death spot)");
+    if (rel) logf_("life: going back to the checkpoint%s", give_up ? " (player gave up)" : "");
+    static DWORD next_press;
+    if (load_until && (int32_t)(load_until - now) > 0 && now - g_dead_t > 4000 && (int32_t)(now - next_press) >= 0) {
+        press_load(); next_press = now + 2500;
+        logf_("life: pressed Load Current Save");
     }
     if (died) { sfx_play(SFX_STING); logf_("life: partner died"); }
     if (both) logf_("life: both down, back to the checkpoint");
@@ -375,7 +411,6 @@ static void net_recv(void) {
 }
 
 /* ---------- overlay ---------- */
-static HWND g_game, g_ov;
 static BOOL CALLBACK find_game(HWND h, LPARAM lp) {
     DWORD pid; GetWindowThreadProcessId(h, &pid);
     if (pid != g_pid || !IsWindowVisible(h) || h == g_ov) return TRUE;
@@ -728,7 +763,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
         net_send_world();
         send_life(0);
         net_recv();
-        life_step(InterlockedExchange(&g_give_up, 0) != 0);
+        life_step(InterlockedExchange(&g_give_up, 0) != 0, &c);
         if (g_life_test_ms && now - g_t0 >= g_life_test_ms) {   /* QA: a death without dying (AIC_LIFE_TEST=<s>) */
             uint32_t m[10] = {0};
             g_life_test_ms = 0;

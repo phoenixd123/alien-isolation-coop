@@ -22,8 +22,11 @@ typedef struct {
 
 void life_init(Life *L, uint32_t now);
 int life_peer_live(const Life *L, uint32_t now);
-/* The game wants to run game over. Returns 1 to hold it (we spectate the partner), 0 to let it run now. */
+/* The player died. The game then waits on its own game-over menu. Returns 1 while we should keep waiting there
+   and spectate the partner, 0 to go back to the checkpoint now ("Load Current Save"). */
 int life_on_gameover(Life *L, uint32_t now);
+/* The game reloaded on its own while we were spectating (the player picked a save on the menu). */
+void life_on_respawn(Life *L, uint32_t now);
 void life_on_peer(Life *L, int state, uint32_t epoch, uint32_t now);
-/* Returns 1 when a held game over must run now (both down, partner gone, or the player gave up). */
+/* Returns 1 when a waiting player must go back to the checkpoint now (both down, partner gone, or gave up). */
 int life_tick(Life *L, uint32_t now, int give_up);

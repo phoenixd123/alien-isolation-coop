@@ -85,7 +85,18 @@ int main(void) {
     die(&a, now);
     CHECK(!a.held, "partner restarting (not alive yet): our game over runs too");
 
-    /* 8. Packets. */
+    /* 8. The player picks a save on the game-over menu while spectating: counts as going back, partner keeps playing. */
+    memset(&a, 0, sizeof a); memset(&b, 0, sizeof b); life_init(&a.L, now); life_init(&b.L, now);
+    run(&a, &b, &now, 2000);
+    die(&a, now); CHECK(a.held, "A waits on the menu");
+    life_on_respawn(&a.L, now); a.held = 0;
+    CHECK(a.L.state == LIFE_RESTART, "respawn on our own: restarting");
+    run(&a, &b, &now, LIFE_RESTART_MS + 1000);
+    CHECK(a.L.state == LIFE_ALIVE && b.L.state == LIFE_ALIVE && b.ran == 0, "partner unaffected, both alive");
+    life_on_respawn(&a.L, now);
+    CHECK(a.L.state == LIFE_ALIVE, "respawn while alive is ignored");
+
+    /* 9. Packets. */
     LifePkt lp; proto_fill_life(&lp, LIFE_DEAD, 7, 1234, 3);
     CHECK(proto_check_life(&lp, sizeof lp), "life packet round trip");
     CHECK(!proto_check_life(&lp, sizeof lp - 1), "life packet: wrong length rejected");

@@ -13,6 +13,5 @@ void replay_set_hook(uint32_t(__attribute__((thiscall)) *hook)(void *, void *, v
 void replay_init(void (*logf)(const char *, ...));
 int replay_request(const ReplayKey *k);   /* resolve in the background, then run on the next dispatch */
 uint32_t replay_resolve(const ReplayKey *k);
-int replay_post_raw(uint32_t hb, const uint32_t raw[10], uint32_t want_type);   /* re-run a held message */
 int replay_active(void);                  /* 1 while a replayed call runs (echo guard) */
 void replay_pump(void *self, uint32_t(__attribute__((thiscall)) *tramp)(void *, void *, void *, void *), const void *cur_msg);

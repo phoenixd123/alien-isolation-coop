@@ -2,13 +2,14 @@
  * Co-op death: when you die, you watch your partner until they die too, then both games go back to their last
  * checkpoint.
  *
- * The game ends a life by triggering a GameOver script entity (Global\GameOver_1, NPC_Logic\GameOver_1; see
- * games/alien-isolation/NOTES.md). probe.c asks life_on_gameover() before that trigger runs:
- *   - partner alive and connected: hold the trigger (the game does not show game over or reload yet),
- *     state DEAD, the HUD switches to spectating.
- *   - partner already down, or no partner: let it run, state RESTART. The partner sees RESTART (or DEAD) and
- *     releases its own held game over, so both reload a checkpoint at the same time.
- * A held game over also runs if the partner disconnects for LIFE_GONE_RELEASE_MS, or the player gives up.
+ * Observed in game (2026-11-04): a death runs TriggerDeath on the player's Health_Damage_Death script, then the engine
+ * shows its game-over menu ("Load Current Save" selected) and waits there; nothing reloads until a choice is made.
+ * probe.c reports the death; life_on_gameover() decides:
+ *   - partner alive and connected: state DEAD. The game stays on its menu and the HUD shows the partner.
+ *   - partner already down, or no partner: state RESTART, and coopnet picks "Load Current Save". The partner sees
+ *     RESTART (or DEAD) and picks it too, so both reload their checkpoint at the same time.
+ * A waiting player also goes back if the partner disconnects for LIFE_GONE_RELEASE_MS, or gives up (F9, or picking a
+ * save on the menu themselves: life_on_respawn).
  * Epochs keep an old RESTART packet from releasing a later death.
  */
 #include <string.h>
@@ -38,6 +39,10 @@ void life_on_peer(Life *L, int state, uint32_t epoch, uint32_t now) {
     if (L->peer_known && state == LIFE_DEAD && L->peer_state != LIFE_DEAD) L->ev_peer_died = 1;
     if (!L->peer_known && state == LIFE_DEAD) L->ev_peer_died = 1;
     L->peer_known = 1; L->peer_state = state; L->peer_epoch = epoch; L->peer_t = now;
+}
+
+void life_on_respawn(Life *L, uint32_t now) {
+    if (L->state == LIFE_DEAD) go_restart(L, now);
 }
 
 int life_tick(Life *L, uint32_t now, int give_up) {
