@@ -307,6 +307,29 @@ static void init(HMODULE self) {
     snprintf(g_savedir, sizeof g_savedir, "%s\\%s", sd, g_profile[0] ? g_profile : "default");
     CreateDirectoryA(g_savedir, NULL);
     logf_("steamwrap up. profile='%s' savedir='%s'", g_profile, g_savedir);
+    /* AIC_SEED_SAVES=1 (couch seats): an empty profile starts from a copy of coop_saves\default, so every seat
+       continues the same campaign. Existing files are never overwritten. */
+    char seed[8];
+    if (g_profile[0] && GetEnvironmentVariableA("AIC_SEED_SAVES", seed, sizeof seed) && seed[0] == '1') {
+        char pat[MAX_PATH]; snprintf(pat, sizeof pat, "%s\\*", g_savedir);
+        WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd); int any = 0;
+        if (h != INVALID_HANDLE_VALUE) { do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) any = 1; } while (!any && FindNextFileA(h, &fd)); FindClose(h); }
+        if (!any) {
+            int copied = 0;
+            snprintf(pat, sizeof pat, "%s\\default\\*", sd);
+            h = FindFirstFileA(pat, &fd);
+            if (h != INVALID_HANDLE_VALUE) {
+                do {
+                    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                    char a[MAX_PATH], b[MAX_PATH];
+                    snprintf(a, sizeof a, "%s\\default\\%s", sd, fd.cFileName); snprintf(b, sizeof b, "%s\\%s", g_savedir, fd.cFileName);
+                    if (CopyFileA(a, b, TRUE)) copied++;
+                } while (FindNextFileA(h, &fd));
+                FindClose(h);
+            }
+            logf_("seeded empty profile '%s' with %d save files from coop_saves\\default", g_profile, copied);
+        }
+    }
 
     wchar_t rp[MAX_PATH]; _snwprintf(rp, MAX_PATH, L"%ls\\steam_api_real.dll", g_gamedir); rp[MAX_PATH - 1] = 0;
     g_real = LoadLibraryW(rp);

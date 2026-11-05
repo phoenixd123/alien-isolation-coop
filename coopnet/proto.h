@@ -71,3 +71,57 @@ static inline int proto_check(const PresencePkt *k, int len) {
     for (int i = 0; i < 3; i++) if (!(k->pos[i] == k->pos[i]) || k->pos[i] > 1e6f || k->pos[i] < -1e6f) return 0;
     return 1;
 }
+
+/* kind 3: life state (co-op death and spectating, see life.c). Sent every 500 ms and on every change, 3 times.
+   flags bit0 = sender runs on the same PC (couch / split screen), so `pid` names its game process;
+   bit1 = sender is the host. */
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;
+    uint8_t  version, kind, state, flags;
+    uint32_t epoch;                      /* how many times the sender went back to a checkpoint */
+    uint32_t pid;
+    uint32_t check;
+} LifePkt;
+#pragma pack(pop)
+
+_Static_assert(sizeof(LifePkt) == 20, "LifePkt must be 20 bytes");
+
+static inline void proto_fill_life(LifePkt *k, int state, uint32_t epoch, uint32_t pid, int flags) {
+    memset(k, 0, sizeof *k);
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 3;
+    k->state = (uint8_t)state; k->flags = (uint8_t)flags; k->epoch = epoch; k->pid = pid;
+    k->check = proto_sum(k, offsetof(LifePkt, check));
+}
+
+static inline int proto_check_life(const LifePkt *k, int len) {
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 3 || k->state > 2) return 0;
+    return k->check == proto_sum(k, offsetof(LifePkt, check));
+}
+
+/* kind 4: where the sender's alien is (character-table record, see alien.c). 10 Hz. flags bit0 = found. */
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;
+    uint8_t  version, kind, flags, pad;
+    uint32_t seq;
+    float    pos[3];
+    uint32_t check;
+} AlienPkt;
+#pragma pack(pop)
+
+_Static_assert(sizeof(AlienPkt) == 28, "AlienPkt must be 28 bytes");
+
+static inline void proto_fill_alien(AlienPkt *k, uint32_t seq, const float pos[3], int found) {
+    memset(k, 0, sizeof *k);
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 4; k->flags = found ? 1 : 0; k->seq = seq;
+    if (found) memcpy(k->pos, pos, 12);
+    k->check = proto_sum(k, offsetof(AlienPkt, check));
+}
+
+static inline int proto_check_alien(const AlienPkt *k, int len) {
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 4) return 0;
+    if (k->check != proto_sum(k, offsetof(AlienPkt, check))) return 0;
+    for (int i = 0; i < 3; i++) if (!(k->pos[i] == k->pos[i]) || k->pos[i] > 1e6f || k->pos[i] < -1e6f) return 0;
+    return 1;
+}

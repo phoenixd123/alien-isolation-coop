@@ -20,11 +20,16 @@ try { & .\harness.exe; $rc = $LASTEXITCODE } finally { Pop-Location }
 if ($rc) { throw "steamwrap offline test failed" }
 
 # --- coopnet + its tests (wire protocol over real UDP, projection math)
-Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" "$root\coopnet\replay.c" "$root\coopnet\worldsync.c" -lws2_32 -lgdi32 -luser32
+Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" "$root\coopnet\replay.c" "$root\coopnet\worldsync.c" "$root\coopnet\life.c" "$root\coopnet\sfx.c" -lws2_32 -lgdi32 -luser32 -lwinmm -ldwmapi
 Z -O2 -Wall -Wextra -o "$out\proto_test.exe" "$root\coopnet\test\proto_test.c" -lws2_32
 & "$out\proto_test.exe"; if ($LASTEXITCODE) { throw "proto_test failed" }
 Z -O2 -Wall -Wextra -o "$out\view_test.exe" "$root\coopnet\test\view_test.c"
 & "$out\view_test.exe"; if ($LASTEXITCODE) { throw "view_test failed" }
+# co-op death rules (spectate until both are down) with the life/alien packets; motion-tracker math
+Z -O2 -Wall -Wextra -o "$out\life_test.exe" "$root\coopnet\test\life_test.c" "$root\coopnet\life.c"
+& "$out\life_test.exe"; if ($LASTEXITCODE) { throw "life_test failed" }
+Z -O2 -Wall -Wextra -o "$out\hud_test.exe" "$root\coopnet\test\hud_test.c"
+& "$out\hud_test.exe"; if ($LASTEXITCODE) { throw "hud_test failed" }
 # Steam P2P transport against a fake steam_api that checks the MSVC argument layout
 $st = Join-Path $out "stest"
 if (Test-Path $st) { Remove-Item -Recurse -Force $st }
@@ -40,6 +45,7 @@ $pkg = Join-Path $out "alien-isolation-coop"
 if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
 New-Item -ItemType Directory -Force $pkg | Out-Null
 Copy-Item "$out\steam_api.dll", "$out\coopnet.dll", "$root\dist\install.ps1", "$root\dist\play-coop.bat", "$root\README.md", "$root\LICENSE" $pkg
+Copy-Item -Recurse "$root\dist\couchlink" (Join-Path $pkg "couchlink")
 $zip = Join-Path $out "alien-isolation-coop.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path "$pkg\*" -DestinationPath $zip

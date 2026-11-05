@@ -14,6 +14,12 @@
 
 static int g_sync;   /* world sync (worldsync.c) on; AIC_SYNC=0 turns it off */
 
+/* Co-op death (life.c): coopnet.c decides whether a GameOver trigger runs now or is held back. */
+#define SG_TRIGGER_  0xd9d0ca29u
+#define T_GAMEOVER   0x2f97adeeu
+static int (*g_gameover_cb)(uint32_t hb, const uint32_t *msg);
+void probe_set_gameover_cb(int (*cb)(uint32_t hb, const uint32_t *msg)) { g_gameover_cb = cb; }
+
 #define RVA_CALL_METHOD 0x526680u
 static const uint8_t CM_PROLOGUE[10] = {0x55, 0x8B, 0xEC, 0x6A, 0xFF, 0x68}; /* first 6 checked; imm32 is relocated */
 
@@ -143,7 +149,11 @@ static uint32_t __attribute__((thiscall)) cm_hook(void *self, void *a1, void *a2
     if (g_mode == 3) trace(a1, a3);
     if (g_sync) {
         const uint32_t *msg = *(const uint32_t **)a3, *hb = *(const uint32_t **)a1;
-        ws_on_call(msg, hb ? (const uint32_t *)(uintptr_t)hb[3] : NULL);
+        const uint32_t *target = hb ? (const uint32_t *)(uintptr_t)hb[3] : NULL;
+        if (msg && target && msg[0] == SG_TRIGGER_ && target[4] == T_GAMEOVER && !replay_active() && g_gameover_cb &&
+            g_gameover_cb((uint32_t)(uintptr_t)hb, msg))
+            return 1;   /* held: life.c runs it later through replay_post_raw */
+        ws_on_call(msg, target);
     }
     uint32_t r = g_cm_tramp(self, a1, a2, a3);
     replay_pump(self, g_cm_tramp, (const void *)rd32((uintptr_t)a3));

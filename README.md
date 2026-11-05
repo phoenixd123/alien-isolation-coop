@@ -3,9 +3,12 @@
 An attempt to add online co-op to *Alien: Isolation* (2014, Creative Assembly). Built
 with the [coop-anything](https://github.com/cranebeaker/coop-anything) playbook.
 
-> **Status: prototype. You see each other, and doors, picked-up items and story steps are
-> shared. The alien is not.** Each player still runs their own copy of the campaign; the mod
-> replays the other player's door openings, pickups and mission steps in your game.
+> **Status: prototype.** You see each other on a shared motion tracker. Doors, picked-up items,
+> keycards, tools and story steps are shared. When you die you watch your partner until they die
+> too, then you both go back to the last checkpoint. The host's alien director (when the alien
+> comes out, retreats or changes behaviour) drives the joiner's alien. Each player still runs their
+> own copy of the campaign; the mod replays the other player's actions in your game.
+> **Many of the new parts have not run in a level yet**; the table says which.
 
 ## What works (tested 2026-11-01)
 
@@ -24,7 +27,13 @@ with the [coop-anything](https://github.com/cranebeaker/coop-anything) playbook.
 | **Doors**: a door your friend opens opens for you too (and closes on its own) | ✅ tested in game (two copies, one PC) |
 | **Items**: an item your friend picks up disappears from your world (you don't get a copy) | ✅ tested in game; the pickup was started by the test tool, not by aiming at it |
 | **Story**: mission steps your friend reaches run in your game too (your own mission script continues) | ✅ tested in game on one mission step (M04 crowbar); not a whole mission |
-| Shared alien | ❌ not built. Its record in the engine's character table is found (see below), but no save with the alien was available to test |
+| **Keycards and tools**: a keycard or tool (cutting torch etc.) your friend picks up is given to you too | ⚠️ built, offline tests only. Not run in a level yet |
+| **Alien director (host owns it)**: when the host's alien is withdrawn into the vents, reconfigured or changes stage, the joiner's alien does the same | ⚠️ built, offline tests only. No save with the alien was available |
+| Alien position: the same alien in the same spot for both | ⚠️ partial. Each game streams where its alien is, and a spectator sees the partner's alien. Moving the joiner's alien to the host's spot (`AIC_ALIEN_PIN=1`) is experimental and untested; which character-table tag is the alien is a guess (3) |
+| **Death and spectating**: when you die you watch your partner; when they die too, both games go back to the last checkpoint | ⚠️ the network side was tested in game (two copies, simulated deaths, below). Holding the game's real game over has not run yet: it needs a death in a level |
+| **Split screen on one PC** with [Couchlink](https://github.com/cranebeaker/couchlink) | ⚠️ the recipe is written, and seats were tested with two copies on one PC as Couchlink would start them (below). Not run inside Couchlink yet, and the recipe hasn't been checked with `check_recipe` |
+| **Co-op horror HUD**: motion tracker, pings, heartbeat, partner-down sting and red flash | ⚠️ drawn and checked offscreen at the menu; not seen in a level yet |
+| Online lobbies and Steam invites | 📝 planned only: [docs/online.md](docs/online.md). Joining by Steam ID works today |
 
 Tested only with **Steam build 4940658**, where `AI.exe` has SHA-256
 `DDE66521798AAE8C39ED4E7A3400F561FCECFFF83619D1426B9E0CEDF5819A90`. The installer
@@ -49,6 +58,34 @@ refuses other builds unless you pass `-Force`.
 
 The overlay only draws while the game window is focused. Play in windowed or borderless
 mode: exclusive fullscreen can hide it.
+
+### Split screen on one PC (Couchlink)
+
+[Couchlink](https://github.com/cranebeaker/couchlink) runs one copy of the game per player on one PC,
+each with its own part of the screen and its own controller or keyboard and mouse.
+
+1. Install the mod (above), with your saves copied into `coop_saves\default`.
+2. Add `couchlink\alien-isolation-coop.json` from the mod zip to Couchlink as a recipe.
+3. Two players take a seat, press Play.
+
+Each copy gets `AIC_COUCH_SEAT`. Seat 0 hosts and seat 1 joins `127.0.0.1:45500`. Each seat keeps its own
+saves in `coop_saves\seat<N>`; an empty seat starts from a copy of `coop_saves\default`. One Steam account
+is enough. In couch mode the overlay draws whenever the window is visible. When you die you see your
+partner's screen in your half.
+
+## Playing it like a horror game
+
+- **Motion tracker** (bottom left). It shows movement, like the game's own tracker: any character that
+  moved in the last second within 25 m, plus your partner in green. Pings get faster and higher as a
+  contact closes in; under 6 m you hear a heartbeat. "PARTNER SIGNAL WEAK" flashes when you are more
+  than 40 m apart.
+- **Death.** When the alien gets you, the game over waits. You watch your partner: on the same PC their
+  own screen, online a bio-monitor showing them and where their alien is ("IT IS RIGHT ON THEM"). They
+  get a sting, a red flash and "YOUR PARTNER IS DOWN, stay alive". When they die too, both games go back
+  to the last checkpoint. If they disconnect, you go back after 10 s. Hold F9 for 2 s to go back at once.
+- **One alien director.** The host's game decides when the alien comes out and when it retreats;
+  the joiner's alien follows those decisions.
+- Sounds are generated by the mod (no files). `AIC_SFX=0` mutes them.
 
 Uninstall: `powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall` restores the
 original `steam_api.dll`. Your co-op saves stay in `coop_saves`.
@@ -81,7 +118,13 @@ original `steam_api.dll`. Your co-op saves stay in `coop_saves`.
   connects and ignores everyone else; a joiner only accepts packets from the host's ID.
 - Settings (environment): `AIC_COOP_MODE=host|join|steam-host|steam-join`,
   `AIC_COOP_PEER=<ip>:<port>`, `AIC_COOP_PEER_STEAM=<SteamID64>` (or `self` for a one-account
-  loopback test), `AIC_COOP_PORT`, `AIC_COOP_NAME`, `AIC_PROFILE`.
+  loopback test), `AIC_COOP_PORT`, `AIC_COOP_NAME`, `AIC_PROFILE`, `AIC_COUCH_SEAT=<n>` (split screen),
+  `AIC_SEED_SAVES=1` (an empty profile starts from `coop_saves\default`), `AIC_SFX=0`,
+  `AIC_ALIEN_TAG=<n>` (character-table tag of the alien, default 3), `AIC_ALIEN_PIN=1` (experimental),
+  `AIC_SYNC=0`. QA only: `AIC_SPECTATE_TEST=1` (show the spectate view), `AIC_LIFE_TEST=<s>` (a simulated
+  death after s seconds).
+- `coopnet/life.c`: the death rules (pure logic, tested offline). `coopnet/hud.h`: tracker math.
+  `coopnet/sfx.c`: the sounds. `coopnet/online.h` and `docs/online.md`: the online plan (not built).
 
 ## Build and test
 
@@ -92,14 +135,29 @@ Needs [Zig 0.16.0](https://ziglang.org/download/).
 ```
 
 Builds both DLLs, runs every offline test (no game needed) and writes the player package
-`build\alien-isolation-coop.zip` plus `build\SHA256SUMS.txt`. Last run (2026-11-01):
+`build\alien-isolation-coop.zip` plus `build\SHA256SUMS.txt`. Last run (2026-11-04):
 
 ```
 steamwrap ABI test:   40 passed, 0 failed
 protocol over UDP:    18 passed, 0 failed  (476/476 packets, loss and reorder simulated; world packets)
 overlay projection:   10 passed, 0 failed  (cases taken from in-game measurements)
+death rules:          27 passed, 0 failed  (two simulated players: spectate, both down, disconnect, give up,
+                                            stale packets, solo; life and alien packets)
+motion tracker:       14 passed, 0 failed  (yaw, pitch ignored, motion window, teleports, ping rate)
 steam transport:      24 passed, 0 failed  (fake steam_api checks the MSVC argument layout both ways)
 ```
+
+Couch seats and death rules in game (2026-11-04, two copies on one PC at the main menu, started the way
+the Couchlink recipe starts them, no bot input):
+- Seat 0 became host and seat 1 joined `127.0.0.1:45500`. The host learned the joiner from its life
+  packets. Both empty seat profiles were seeded with the 5 save files from `coop_saves\default`.
+- `AIC_SPECTATE_TEST=1` on seat 1: it found seat 0's game window and showed it live
+  (`DwmRegisterThumbnail` returned S_OK). The offscreen overlay render shows the spectate banner.
+- `AIC_LIFE_TEST`: seat 1 "died" first. It held its game over and spectated, and seat 0 logged "partner
+  died" 65 ms later. Seat 0 "died" 27 s later: its game over ran ("both down"), and seat 1 released its
+  held game over 98 ms after that.
+- Not covered: a real death in a level. Whether the engine's GameOver goes through `call_method` (where
+  the mod holds it) is still unknown.
 
 World sync in game (2026-11-03, HAB_AIRPORT save, two copies on one PC over localhost, bot-driven):
 - Door: p2 walked into `Door_SML_9`; p1 received the event 38 ms later and p1's own trace shows the
@@ -138,9 +196,13 @@ sent and received matched (tx 1874, rx 1872 at the end).
   talk to each other (Steam has one ID per account), so local testing uses UDP or `self`.
 - Fullscreen copies minimize when they lose focus. Use windowed mode.
 - The first launch of a new profile shows the brightness calibration screen.
-- World sync covers doors, pickups and mission `LogicOnce` steps only. Keycard/hacking unlocks,
-  lifts, cutscenes and anything else a mission does outside a `LogicOnce` are not synced yet, so a
-  long session can still drift. Load the same save on both PCs.
+- World sync covers doors, pickups, keycards, tools, the alien director and mission `LogicOnce`
+  steps. Hacking unlocks, lifts, cutscenes and anything else a mission does outside these are not
+  synced yet, so a long session can still drift. Load the same save on both PCs.
+- Each game still has its own alien. They make the same director decisions (host's), but between
+  those they hunt on their own, so they can be in different places.
+- If the engine doesn't send game over through `call_method`, death works as in the normal game
+  (each player reloads on their own); the log line `life: game over` shows whether it was caught.
 - At level load each game reports doors that the save left open; harmless, the other game opens them too.
 
 ## How world sync works
@@ -155,6 +217,10 @@ and that path is the same on both PCs. coopnet hooks the engine's `EntityManager
 | a `Door_Package` sets `IsOpen` | `request_open` on that door's `Door` (opens and auto-closes; locked doors stay locked) |
 | a `pickup_common` fires `SetPersistentIntegerValue` (item collected) | the same trigger plus `IntegerEquals_1`: the load-time "already taken" path, which hides the item |
 | a `LogicOnce` inside one of the 35 story mission composites fires | the same `LogicOnce` (fires once by design, so it can't double up); their mission script carries on |
+| a `keycard` pickup fires `SetPlayerHasKeycard` | the same: they get the card |
+| a `Cutting_Tool` fires `SetPlayerHasGatingTool` | the same: they get the tool |
+| **host only**: `NPC_WithdrawAlien`, `NPC_AlienConfig` (mission scripts, `BackstagePlayerDetection`) or `NPC_SetAlienDevelopmentStage` fires | the same on the joiner's alien. The host never accepts these |
+| a `GameOver` is triggered (you died) | not replayed: held by the death rules above |
 
 The other game finds the entity by its path (about 0.1 s) and runs the method on the game thread.
 Only methods in this table are accepted from the network. A change that came from your friend is not
@@ -164,12 +230,15 @@ sent back. These archetypes have the same IDs in every story level. `AIC_SYNC=0`
 
 1. Test across two PCs with two Steam accounts (needs two people or two machines).
 2. A visible character puppet instead of the overlay marker.
-3. The alien: the engine keeps live character positions in a static table (`AI.exe + 0x1307AC8`,
-   stride 0xB0, one record per character, a tag after the position). coopnet logs it every 5 s
-   (`chars:` lines). Next: load a save where the alien is present, find its record, then make the
-   host own it and drive the client's alien (or hide it and show the host's).
-4. More world sync: keycard/hacking unlocks, lifts, terminals, cutscenes, and a whole mission played
-   through with two players.
+3. The alien: load a save where it is present (M06 or later). Confirm its character-table tag
+   (`chars:` lines, guessed 3 = `ALLIANCE_GROUP.ALIEN`; the airport save's 5 and 7 fit CIVILIAN and
+   DEAD). Then check whether writing the record moves it (`AIC_ALIEN_PIN=1`); if not, find the
+   character's transform.
+4. A real death in a level, to confirm the game over hold; then a whole mission played through with
+   two players.
+5. Run the recipe inside Couchlink and check it with `check_recipe`.
+6. Online lobbies and invites: [docs/online.md](docs/online.md).
+7. More world sync: hacking unlocks, lifts, terminals, cutscenes.
 
 ## Credits and prior work
 

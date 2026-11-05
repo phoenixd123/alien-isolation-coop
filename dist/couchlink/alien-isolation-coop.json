@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "id": "alien-isolation-coop",
+  "game": "Alien: Isolation (co-op mod)",
+  "match": { "steamAppId": 214490, "exe": "AI.exe" },
+  "players": [2, 2],
+  "mode": "instances",
+  "steam": "shared",
+  "present": "window",
+  "launch": {
+    "exe": "AI.exe",
+    "env": {
+      "AIC_COUCH_SEAT": "$SEAT",
+      "AIC_PROFILE": "seat$SEAT",
+      "AIC_COOP_NAME": "$PLAYER",
+      "AIC_SEED_SAVES": "1"
+    }
+  },
+  "files": {
+    "link": "all",
+    "exclude_dirs": ["coop_logs"]
+  },
+  "requires": [
+    {
+      "file": "coopnet.dll",
+      "contains": "AICoopOverlay",
+      "hint": "Install the Alien: Isolation co-op mod first: run install.ps1 from the mod's release zip."
+    }
+  ],
+  "window": { "borderless": true, "settle_ms": 8000 },
+  "source": "alien-isolation-coop"
+}
