@@ -17,7 +17,9 @@ static class P {
     static Commands Load(string pak) {
         // pak = <DATA>\ENV\PRODUCTION\<LEVEL>\WORLD\COMMANDS.PAK ; Level needs Global (DATA\ENV\GLOBAL)
         string lvl = Path.GetDirectoryName(Path.GetDirectoryName(pak));
-        string env = Path.GetDirectoryName(Path.GetDirectoryName(lvl));
+        string env = Path.GetDirectoryName(lvl);   // walk up to DATA\ENV (DLC maps sit one level deeper)
+        while (env != null && !Path.GetFileName(env).Equals("ENV", StringComparison.OrdinalIgnoreCase)) env = Path.GetDirectoryName(env);
+        if (env == null) throw new Exception("not under DATA/ENV: " + pak);
         _g ??= new Global(Path.Combine(env, "GLOBAL"));
         var level = new Level(lvl, _g);
         if (level.Commands == null || !level.Commands.Loaded) throw new Exception("failed to load " + pak);

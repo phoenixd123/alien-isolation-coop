@@ -1,16 +1,16 @@
 # Alien: Isolation co-op
 
-Work-in-progress two-player co-op mod for *Alien: Isolation* (2014). Each player runs their own copy of the
+A two-player co-op mod I'm making for *Alien: Isolation* (2014). Each player runs their own copy of the
 campaign, and the mod mirrors what the other player does into your game: where they are, doors they open,
 items and keycards they pick up, story steps they reach, and when they die.
 
-It's a prototype. Plenty works in game already, plenty doesn't yet. The table below is honest about which is
+It's still a prototype. A lot already works in game and a lot doesn't yet; the table below shows which is
 which.
 
 ## Where it's at
 
-Tested on the Steam version only (build 4940658). Most in-game testing so far is two copies of the game on one
-PC; it hasn't been played across two PCs yet. Full test notes are in [docs/testing.md](docs/testing.md).
+I've only tested it on the Steam version (build 4940658), and so far mostly with two copies of the game on one
+PC. I haven't played it across two PCs yet. My full test notes are in [docs/testing.md](docs/testing.md).
 
 | Feature | State |
 |---|---|
@@ -141,7 +141,7 @@ install). In the copy, rename `steam_api.dll` to `steam_api_real.dll`, drop in `
 `steam_appid.txt` containing `214490`, then start it with `$env:AIC_PROFILE="p1"; .\AI.exe` (and `p2` for a
 second copy). Logs go to `coop_logs\`.
 
-## Next up
+## What I'm working on next
 
 1. Partner body in every level, set up by the installer on your own (backed-up) level files.
 2. One shared alien: the host's alien hunts both players, the joiner's alien copies its position, and a kill on
@@ -160,7 +160,7 @@ second copy). Logs go to `coop_logs\`.
   [Goldberg emulator](https://gitlab.com/Mr_Goldberg/goldberg_emulator).
 - [Couchlink](https://github.com/cranebeaker/couchlink) for split screen on one PC.
 - Thanks to the modders whose public notes on the engine (the camera pointer chain and the script call
-  layout) gave this a head start.
+  layout) gave me a head start.
 
 No game files are included; you need your own copy of the game.
 

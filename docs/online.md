@@ -5,8 +5,8 @@ Status: **planned, not implemented, not tested.** The interface is in `coopnet/o
 ## What already works online
 
 `play-coop.bat steam-host` / `steam-join <SteamID64>` runs every co-op packet over Steam P2P (`coopnet/steamnet.c`).
-Steam relays the traffic, so nobody has to forward ports. It was tested on one PC: one account talking to itself
-(loopback), then two copies over UDP on localhost. It hasn't been tested on two PCs with two accounts.
+Steam relays the traffic, so nobody has to forward ports. I tested it on one PC: one account talking to itself
+(loopback), then two copies over UDP on localhost. I haven't tested it on two PCs with two accounts yet.
 
 ## What this step adds
 

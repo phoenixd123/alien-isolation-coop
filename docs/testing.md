@@ -1,6 +1,6 @@
 # Test log
 
-What was run, on what, and what came out. Most in-game tests use two copies of the game on one PC
+What I ran, on what, and what came out. Most of my in-game tests use two copies of the game on one PC
 (Steam build 4940658), driven by a bot script. Newest at the bottom of each section.
 
 ## Offline suite
