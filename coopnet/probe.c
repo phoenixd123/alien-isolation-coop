@@ -1,6 +1,6 @@
 /* Research probe (opt-in with AIC_PROBE=1): hooks CATHODE::EntityManager::call_method (RVA 0x526680, thiscall,
  * 3 stack args, ret 0Ch) and records each distinct (target class, message class) pair with a count, resolved
- * through MSVC RTTI. Layout of the arguments (smart-pointer slots) follows coop-anything PR #156 notes:
+ * through MSVC RTTI. Argument layout (smart-pointer slots):
  *   target object = *(*(a1) + 0xC), message type word = *(*(a3) + 0x8) (a vtable address), message object +0xC.
  * Dumps new pairs to coop_logs\probe_<profile>_<pid>.log every few seconds.
  */

@@ -36,6 +36,6 @@ Steam relays the traffic, so nobody has to forward ports. It was tested on one P
 - A fake `ISteamMatchmaking` in `coopnet/test/fake_steam.c`: create, join, leave, the owner changing, the lobby
   filling up.
 - Handshake mismatch cases (offline, like `life_test.c`).
-- A network-chaos run (`playbook/network-chaos-testing.md` in coop-anything): 200 ms latency and 5% loss, checking
+- A bad-network run: 200 ms latency and 5% loss, checking
   that doors, story steps and deaths still line up.
 - A real two-PC, two-account session, logged on both sides.

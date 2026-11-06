@@ -5,7 +5,7 @@ campaign, and the mod mirrors what the other player does into your game: where t
 items and keycards they pick up, story steps they reach, and when they die.
 
 It's a prototype. Plenty works in game already, plenty doesn't yet. The table below is honest about which is
-which. Built with the [coop-anything](https://github.com/cranebeaker/coop-anything) playbook.
+which.
 
 ## Where it's at
 
@@ -154,10 +154,13 @@ second copy). Logs go to `coop_logs\`.
 
 ## Credits
 
+- [CathodeLib](https://github.com/OpenCAGE/CathodeLib) by Matt Filer, used by `levelmod` to read and patch
+  level scripts.
 - Steam interface slot order from the Steamworks headers in the
   [Goldberg emulator](https://gitlab.com/Mr_Goldberg/goldberg_emulator).
-- Early engine research (Cathode, memory layout) by another coop-anything contributor:
-  [issue #85](https://github.com/cranebeaker/coop-anything/issues/85).
+- [Couchlink](https://github.com/cranebeaker/couchlink) for split screen on one PC.
+- Thanks to the modders whose public notes on the engine (the camera pointer chain and the script call
+  layout) gave this a head start.
 
 No game files are included; you need your own copy of the game.
 

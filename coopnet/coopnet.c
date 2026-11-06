@@ -1,7 +1,7 @@
 /*
  * coopnet - the co-op side of the mod, loaded by steamwrap. Steam build 4940658 only.
  *
- * Camera record (pointer chain from coop-anything #85):
+ * Camera record:
  *   mgr = [exe+0x12F0C88], blk = [mgr+0x58], rec = blk+0x78C
  *   rec: quat x,y,z,w | pos x,y,z | fov 47 | near 0.05 | far 1000
  *

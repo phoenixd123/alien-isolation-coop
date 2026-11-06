@@ -1,7 +1,7 @@
 /*
  * replay: run a level-script method on an entity named by its level-file path, on the game thread.
  *
- * Layout (Steam build 4940658; see games/alien-isolation/NOTES.md in coop-anything):
+ * Layout (Steam build 4940658):
  *   entity object:  +8 = handle block of its owner (parent composite instance entity), +0xC = entity ID
  *                   (level-file ShortGuid), +0x10 = type ShortGuid.
  *   handle block:   16 bytes { vtable, refcount, flag, entity* }.
