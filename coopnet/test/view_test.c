@@ -38,7 +38,7 @@ int main(void) {
     float r30[3] = {cam[0] + 4 * sinf(0.5236f), cam[1], cam[2] + 4 * cosf(0.5236f)};
     m = view_project(cam, id, r30, W, H, 1); CHECK(m.on && m.sx > W / 2, "yaw +30 object -> right, sx=%d", m.sx);
 
-    /* the in-game pair from the 2026-11-01 run: p2 at spawn facing +Z sees p1 ahead, slightly right */
+    /* real pair from a test run: p2 at spawn facing +Z sees p1 ahead, slightly right */
     float p1[3] = {39.34f, 5.07f, -2.32f};
     m = view_project(cam, id, p1, W, H, 1);
     CHECK(m.on && m.sx > W / 2 && m.sx < W * 3 / 4, "p1 from p2 spawn: ahead-right, got on=%d sx=%d", m.on, m.sx);

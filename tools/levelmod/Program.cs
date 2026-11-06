@@ -1,6 +1,9 @@
-// cathtool: read-only inspection of Alien: Isolation level scripts (COMMANDS.PAK) with CathodeLib.
-//   cathtool find <levelsDir> <text>          composites / entity names / function types containing text, per level
-//   cathtool funcs <COMMANDS.PAK> <FuncType>  every entity of that function type with its composite and parameters
+// levelmod: inspect and patch Alien: Isolation level scripts (COMMANDS.PAK) with CathodeLib.
+//   find <levelsDir> <text>                  composites / entities / function types matching text
+//   funcs <COMMANDS.PAK> <FuncType>          every entity of a function type, with parameters
+//   ids / comp                               dump entity IDs / one composite
+//   drivenpc <COMMANDS.PAK> <composite> <npc>  add the partner-body marker, go-to and loop next to an NPC
+//   addpartner                               old attempt at a new character (engine never spawns it)
 using System;
 using System.IO;
 using System.Linq;

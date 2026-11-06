@@ -1,9 +1,7 @@
 /*
- * Co-op death: when you die, you watch your partner until they die too, then both games go back to their last
- * checkpoint.
+ * Co-op death rules: when you die you watch your partner until they die too, then both reload the checkpoint.
  *
- * Observed in game (2026-11-04): a death runs TriggerDeath on the player's Health_Damage_Death script, then the engine
- * shows its game-over menu ("Load Current Save" selected) and waits there; nothing reloads until a choice is made.
+ * The engine sits on its game-over menu after a death until something is picked.
  * probe.c reports the death; life_on_gameover() decides:
  *   - partner alive and connected: state DEAD. The game stays on its menu and the HUD shows the partner.
  *   - partner already down, or no partner: state RESTART, and coopnet picks "Load Current Save". The partner sees

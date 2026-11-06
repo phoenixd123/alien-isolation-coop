@@ -1,10 +1,8 @@
-/* Partner body ("puppet"). Characters added through the level file are never spawned by the engine (tested twice), so
- * the body is an NPC the level already has, and `levelmod drivenpc` adds next to it a PositionMarker seeded with a
- * magic position, CMD_GoTo -> marker, TriggerBindCharacter -> the NPC, and a 0.25 s LogicDelay loop (fixed entity IDs:
- * ShortGuids of their names). Tested 2026-11-04 in HAB_AIRPORT: after `spawn`, the NPC walked to each new position
- * written into the marker's parameter block in memory.
- * Here: when a level with a known body loads, move the body's spawn position (its parameter block) to the partner,
- * spawn it, start the loop, then keep writing the partner's feet into the marker.
+/* Partner body. The engine won't spawn characters added through the level file, so we borrow an NPC the level
+ * already has. `levelmod drivenpc` adds a PositionMarker (magic position), a CMD_GoTo to it, a TriggerBindCharacter
+ * for the NPC and a 0.25 s LogicDelay loop, all with fixed IDs.
+ * On level load: move the NPC's spawn point to the partner, spawn it, start the loop, then keep writing the
+ * partner's feet into the marker.
  */
 #include <windows.h>
 #include <stdint.h>

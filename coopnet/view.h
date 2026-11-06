@@ -1,6 +1,6 @@
 /* Camera math for the overlay. Pure functions, shared by the DLL and the offline tests.
  *
- * Convention, measured in game (build 4940658, 2026-11-01, see NOTES):
+ * Convention (measured in game):
  *   rec[0..3] is the view rotation quaternion (x,y,z,w); identity looks along world +Z, +Y is up, +X is right.
  *   Yaw is a rotation about Y: q=(0,sin(t/2),0,cos(t/2)) faces (sin t, 0, cos t). Looking up adds an X component.
  */

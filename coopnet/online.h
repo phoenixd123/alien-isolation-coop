@@ -1,8 +1,6 @@
 /*
- * online: the next step for playing over the internet. INTERFACE ONLY: nothing here is implemented, built or
- * tested yet (see docs/online.md for the plan). Today, online play already works by Steam ID
- * (play-coop.bat steam-host / steam-join, steamnet.c); this layer replaces "send your friend a 17-digit number"
- * with Steam's own lobby and invite flow, and adds the handshake both games need before they share a world.
+ * Lobbies/invites - not implemented yet, just the interface (plan in docs/online.md).
+ * Replaces "send your friend your Steam ID" with Steam's lobby + invite flow, plus a handshake before syncing.
  */
 #pragma once
 #include <stdint.h>

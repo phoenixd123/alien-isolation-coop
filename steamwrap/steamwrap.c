@@ -1,11 +1,11 @@
 /*
- * steamwrap: steam_api.dll wrapper for the Alien: Isolation co-op TEST COPY (Steam build 4940658).
+ * steamwrap: steam_api.dll wrapper for the Alien: Isolation co-op mod (Steam build 4940658).
  *
  * - Forwards every steam_api export to the real DLL (renamed steam_api_real.dll) through jmp thunks,
  *   so no argument counts have to be known for anything that is merely passed through.
- * - SteamAPI_RestartAppIfNecessary -> false, so the test copy never relaunches the registered install.
+ * - SteamAPI_RestartAppIfNecessary -> false, so the game runs from its own folder without relaunching.
  * - SteamRemoteStorage(): local per-profile file store for slots 0..32 (file + cloud-sync API).
- *   The owner's Steam Cloud saves are never read or written. Slots 33+ (workshop/UGC) forward.
+ *   Your Steam Cloud saves are never read or written. Slots 33+ (workshop/UGC) forward.
  * - SteamUserStats(): SetStat/SetAchievement/ClearAchievement/StoreStats/IndicateProgress are no-ops
  *   returning true; everything else forwards.
  * - If AIC_PROFILE is set: the single-instance semaphore/mutex name gets "_<profile>" appended

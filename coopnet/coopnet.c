@@ -1,33 +1,13 @@
 /*
- * coopnet: presence layer for Alien: Isolation co-op (Steam build 4940658 only).
- * Loaded by steamwrap (steam_api.dll) from the game folder.
+ * coopnet - the co-op side of the mod, loaded by steamwrap. Steam build 4940658 only.
  *
- * - Reads the local camera record (pointer chain from coop-anything issue #85):
- *     mgr = *(u32*)(exe + 0x12F0C88); blk = *(u32*)(mgr + 0x58); rec = blk + 0x78C
- *   rec floats: [0..3] rotation quaternion (x,y,z,w) - hypothesis, checked by |q|=1;
- *               [4..6] position; [7]=47 (vfov deg), [8]=0.05 (near), [9]=1000 (far) - signature.
- * - Sends {pos, quat} over UDP at 20 Hz to the peer, receives the peer's.
- * - Draws the peer on a click-through overlay window over the game's client area.
- * - Logs telemetry (CSV) for checking axis conventions against real movement.
+ * Camera record (pointer chain from coop-anything #85):
+ *   mgr = [exe+0x12F0C88], blk = [mgr+0x58], rec = blk+0x78C
+ *   rec: quat x,y,z,w | pos x,y,z | fov 47 | near 0.05 | far 1000
  *
- * Env: AIC_PROFILE (p1/p2...), AIC_COOP_MODE (host|join|steam-host|steam-join), AIC_COOP_PORT (local UDP port),
- *      AIC_COOP_PEER (host:port), AIC_COOP_PEER_STEAM (host's SteamID64, or "self" for a loopback test),
- *      AIC_COOP_NAME (shown to the peer, <=15 chars; Steam modes default to the Steam name).
- * Defaults: p1 binds 45500 and talks to 127.0.0.1:45501; any other profile the reverse (two copies on one PC).
- * host: binds 45500 and answers whoever sends valid packets. join: AIC_COOP_PEER=<host ip>:45500.
- * steam-host / steam-join: same packets over Steam P2P (steamnet.c), no IP or port forwarding.
- * Couch / split screen (Couchlink recipe in dist/couchlink): AIC_COUCH_SEAT=<n>. Seat 0 hosts on UDP 45500, every
- *   other seat joins 127.0.0.1:45500; the overlay draws whenever the window is visible, not only when focused.
- *
- * Co-op horror layer:
- * - Death (life.c): when you die you watch your partner until they die too, then both go back to the checkpoint.
- *   Spectating shows the partner's own window (couch, DWM thumbnail) or a bio-monitor built from their camera and
- *   their alien (online). Hold F9 for 2 s while spectating to go back at once.
- * - Motion tracker (hud.h): moving characters within 25 m and your partner, with pings that speed up as a contact
- *   closes in (sfx.c), a heartbeat when it is very close, a sting and a red flash when your partner dies.
- * - Alien: each game streams where its alien is (character table, tag AIC_ALIEN_TAG, default 3 = guess), so a
- *   spectator sees the partner's alien. AIC_ALIEN_PIN=1 (joiner, experimental) writes the host's alien position
- *   into the joiner's record.
+ * Modes (AIC_COOP_MODE): host / join over UDP 45500, steam-host / steam-join over Steam P2P.
+ * With no mode, p1 and p2 talk to each other on localhost (45500/45501).
+ * AIC_COUCH_SEAT=<n>: Couchlink seat, 0 hosts and the rest join 127.0.0.1.
  */
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -256,8 +236,8 @@ static void on_life(const LifePkt *k) {
     LeaveCriticalSection(&g_cs);
 }
 
-/* "Load Current Save" is the game-over menu's default item. A posted Enter picks it without focus or real input
-   (tested 2026-11-04: the checkpoint loaded 3.8 s later). Pressed every 2.5 s until the camera leaves the death spot. */
+/* "Load Current Save" is the default item on the game-over menu, so a posted Enter picks it (no focus needed).
+   Repeated every 2.5 s until the camera leaves the death spot. */
 static void press_load(void) {
     if (!g_game) return;
     PostMessageA(g_game, WM_KEYDOWN, VK_RETURN, 1 | (0x1C << 16));
@@ -309,21 +289,16 @@ static void life_step(int give_up, const Cam *c) {
     if (both) logf_("life: both down, back to the checkpoint");
 }
 
-/* ---------- spectate camera: follow the partner in first person ----------
- * While we are dead and the partner is alive, our own game renders from the partner's camera. Tested in game
- * 2026-11-04 (HAB_AIRPORT, two copies): the player camera is rebuilt from the character every frame, so writing it does
- * nothing; but while dead the death camera (a script CameraResource, Archetypes\Script\Cameras\KillCamera) is active,
- * and an active script camera renders from its camera records. We find those records (layout below) at the death
- * camera's position and write the partner's pose (presence packets) into them from a 1 ms thread and at every script
- * dispatch. The game-over menu is held meanwhile (show_go_hook) and the death blur and fade are kept off (swallow_cb).
+/* ---------- spectate camera ----------
+ * Writing the player camera does nothing (it's rebuilt from the character every frame), but while dead the
+ * KillCamera script camera is active and renders from its camera records. So we find those records and keep
+ * writing the partner's pose into them. Menu is held (show_go_hook), fade and blur are swallowed (swallow_cb).
  */
 static float g_follow[7];            /* q[4], p[3]; written by the net thread, read by writers (tearing is harmless) */
 static int g_follow_mode = 1;        /* AIC_SPECTATE_CAM=0 turns camera follow off (bio-monitor / thumbnail instead) */
 static int g_nofade;                 /* swallow TriggerDeath while we spectate (no fade to black); AIC_DEATH_NOFADE=0 keeps it */
 
-/* Camera records (quat x,y,z,w | pos x,y,z | fov | near 0.05 | far 1000), found by layout. Found in game 2026-11-04:
-   an active script camera (CameraResource) keeps several such records (current, previous, blend); writing a pose into
-   all of them every frame makes the game render from that pose. The death camera is one of them while you are dead. */
+/* Script cameras keep several copies of their record (current, previous, blend); all of them need the pose. */
 #define NCAMREC 16
 static uint32_t g_camrec[NCAMREC]; static volatile LONG g_ncamrec;
 static int camrec_ok(const float *r) {
@@ -432,10 +407,8 @@ static int swallow_cb(uint32_t method, uint32_t eid, uint32_t type) {
     return s;
 }
 
-/* The game-over menu. Found 2026-11-04: the UI state class's vtable (no RTTI) at exe 0x1300200 has "show game over"
-   at slot 0x1300224 (FUN_00833af0: hides the HUD, opens the "game_over_menu" movie) and "hide" right after it
-   (0x1300228, FUN_00853830); nothing calls it directly. While we spectate, the call is held, so the world keeps
-   rendering (through the follow camera) instead of a black menu. When both are down it runs on the game thread. */
+/* Game-over menu: UI state vtable at exe 0x1300200, "show game over" in slot 0x1300224 (FUN_00833af0), "hide" in
+   0x1300228. Only ever called through the vtable. We hold the call while spectating and run it once both are down. */
 typedef void(__attribute__((thiscall)) *show_go_fn)(void *self);
 static show_go_fn g_show_go;
 static void *volatile g_go_self;
@@ -799,8 +772,7 @@ static LRESULT CALLBACK ov_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcA(h, m, w, l);
 }
 
-/* QA hook: if coop_logs\ovdump_<profile>.req exists, render the overlay offscreen to ov_<profile>.bmp.
-   Lets a bot check the drawing without ever copying screen pixels. */
+/* Debug: coop_logs\ovdump_<profile>.req renders the overlay offscreen to ov_<profile>.bmp. */
 static void maybe_dump(int W, int H) {
     char req[MAX_PATH + 64], out[MAX_PATH + 64];
     snprintf(req, sizeof req, "%s\\coop_logs\\ovdump_%s.req", g_dir, g_profile);
@@ -923,11 +895,9 @@ static DWORD WINAPI overlay_thread(LPVOID p) {
     return 0;
 }
 
-/* ---------- character registry (research) ----------
- * Found 2026-11-03 by scanning for the player's feet below the camera: a static array in AI.exe .data,
- * record stride 0xB0, position (x,y,z floats) at exe+0x1307AC8 + k*0xB0, a tag dword right after it
- * (player 0; meaning of the others unknown). Records follow the characters as they move. Logged every
- * 5 s so a save with the alien shows which record and tag it gets. */
+/* ---------- character table ----------
+ * Static array in AI.exe .data: stride 0xB0, position at exe+0x1307AC8 + k*0xB0, tag dword right after
+ * (0 = player, others not fully known yet). Logged every 5 s. */
 #define RVA_CHAR_POS0 0x1307AC8u
 static void log_characters(void) {
     uintptr_t base = (uintptr_t)GetModuleHandleW(NULL);

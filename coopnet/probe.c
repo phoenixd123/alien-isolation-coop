@@ -14,10 +14,8 @@
 
 static int g_sync;   /* world sync (worldsync.c) on; AIC_SYNC=0 turns it off */
 
-/* Co-op death (life.c): tell coopnet.c when the player dies. Observed 2026-11-04 in HAB_AIRPORT: a player death runs
-   TriggerDeath (ae498037) on the Required_Assets\Health_Damage_Death instance (type 3f4defe1, present in every
-   level); the engine then shows its own game-over menu and waits there. The GameOver script entity only runs for
-   "you killed an ally" (Global\HolsterWeaponOnKillAllied). Both count as a death. Nothing is held back. */
+/* Death detection: a player death runs TriggerDeath (ae498037) on Required_Assets\Health_Damage_Death (3f4defe1,
+   in every level). The GameOver entity only fires for "you killed an ally". Both count. */
 #define SG_TRIGGER_       0xd9d0ca29u
 #define SG_TRIGGERDEATH   0xae498037u
 #define T_GAMEOVER        0x2f97adeeu
