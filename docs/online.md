@@ -1,6 +1,27 @@
 # Online play: plan
 
-Status: **planned, not implemented, not tested.** The interface is in `coopnet/online.h` and isn't built.
+Status: the **LAN lobby is built** (`lobby/`, tested offline). Steam lobbies are **planned, not implemented**.
+
+## LAN lobby (done)
+
+`lobby.exe` is a launcher window. `lobby/lobbyproto.h` is the protocol and state machine, with no sockets, so the
+Steam version can reuse it; `lobby/lobbynet.c` is the LAN transport.
+
+- The host broadcasts a beacon on UDP 45501 every second, to 255.255.255.255 and to each network adapter's own
+  broadcast address (VPN LANs often drop the first). *Join by address* sends a probe to that address and the
+  host answers with its beacon.
+- The joiner sends HELLO every 0.5 s and the host answers with STATE (both players, ready flags, countdown).
+  6 s of silence counts as leaving. Two players per lobby; a third is told it's full. The host can kick.
+- Each side sends fingerprints: a hash of `coopnet.dll`, the `AI.exe` build (PE timestamp and image size),
+  and a hash of the co-op save folder. Different mod or game builds block Start; different saves give a warning
+  and a **Copy host's save** button (TCP; the joiner's own save is moved to `coop_saves\backup\` first).
+- Start runs a 3 s countdown on both sides, then each lobby launches `AI.exe` with the same settings
+  `play-coop.bat` would set (`AIC_COOP_MODE`, `AIC_COOP_PEER`, name, skin).
+- Every packet carries a checksum and a protocol version; anything else is dropped.
+
+`lobby/test/lobby_test.c` runs the state machine with three players on a fake network, the real UDP path on
+loopback, and a real save copy over TCP with a backup check.
+Not tested yet: two PCs, and a game started from the lobby.
 
 ## What already works online
 
@@ -10,7 +31,7 @@ Steam relays the traffic, so nobody has to forward ports. I tested it on one PC:
 
 ## What this step adds
 
-1. **Lobbies and invites instead of Steam IDs.** The host creates a friends-only, 2-member lobby with
+1. **Steam lobbies and invites instead of Steam IDs.** Same HELLO/STATE packets as the LAN lobby, over Steam P2P. The host creates a friends-only, 2-member lobby with
    `ISteamMatchmaking::CreateLobby` and opens the invite dialog (`ISteamFriends::ActivateGameOverlayInviteDialog`).
    The friend accepts in Steam. Steam starts the game with `+connect_lobby <id>` (or sends `GameLobbyJoinRequested_t`
    if it is already running), and coopnet joins the lobby and takes the owner's Steam ID as its peer. Rich presence

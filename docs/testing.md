@@ -13,6 +13,7 @@ protocol over UDP:    18 passed, 0 failed  (476/476 packets, loss and reorder si
 overlay projection:   10 passed, 0 failed  (cases taken from in-game measurements)
 death rules:          31 passed, 0 failed  (spectate, both down, disconnect, give up, early load, stale packets, solo)
 skins:                38 passed, 0 failed  (spawn request matches AI-MP's layout, level names, skin choice, packet)
+lobby:                57 passed, 0 failed  (state machine on a fake clock, then real UDP join/ready/start and TCP save copy on loopback)
 motion tracker:       14 passed, 0 failed  (yaw, pitch ignored, motion window, teleports, ping rate)
 steam transport:      24 passed, 0 failed  (fake steam_api checks the MSVC argument layout both ways)
 ```

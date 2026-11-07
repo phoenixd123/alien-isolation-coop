@@ -11,7 +11,7 @@ What it does (install):
   4. Copies steam_api.dll (wrapper) and coopnet.dll next to AI.exe, writes steam_appid.txt.
   5. Copies (never moves) your existing Steam saves into <game dir>\coop_saves\default, so co-op
      starts where you are. Co-op progress stays there and never touches your Steam Cloud saves.
-  6. Copies play-coop.bat into the game folder.
+  6. Copies lobby.exe (the co-op launcher) and play-coop.bat into the game folder.
 Uninstall puts the original steam_api.dll back and removes the added files. coop_saves is kept.
 #>
 param([string]$GameDir, [switch]$Uninstall, [switch]$Force, [switch]$NoSaveImport)
@@ -43,7 +43,7 @@ $GameDir = (Resolve-Path $GameDir).Path
 if (Get-Process AI -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$GameDir*" }) { throw "Close the game first." }
 
 $api = Join-Path $GameDir "steam_api.dll"; $real = Join-Path $GameDir "steam_api_real.dll"
-$added = "coopnet.dll", "steam_appid.txt", "play-coop.bat"
+$added = "coopnet.dll", "steam_appid.txt", "play-coop.bat", "lobby.exe", "lobby.ini"
 
 if ($Uninstall) {
     if (Test-Path $real) { Move-Item $real $api -Force; "restored original steam_api.dll" } else { "no steam_api_real.dll found; steam_api.dll left as is" }
@@ -55,15 +55,16 @@ if ($Uninstall) {
 $hash = (Get-FileHash (Join-Path $GameDir "AI.exe") -Algorithm SHA256).Hash
 if ($hash -ne $TestedExe -and -not $Force) { throw "AI.exe is a different build ($hash). This mod is only tested on Steam build 4940658. Use -Force to try anyway." }
 
-foreach ($f in "steam_api.dll", "coopnet.dll", "play-coop.bat") { if (-not (Test-Path (Join-Path $here $f))) { throw "missing $f next to install.ps1" } }
+foreach ($f in "steam_api.dll", "coopnet.dll", "play-coop.bat", "lobby.exe") { if (-not (Test-Path (Join-Path $here $f))) { throw "missing $f next to install.ps1" } }
 
 # Back up the original once. If steam_api_real.dll exists we're re-installing over our own wrapper.
 if (-not (Test-Path $real)) { Copy-Item $api $real; "backed up original steam_api.dll -> steam_api_real.dll" }
 Copy-Item (Join-Path $here "steam_api.dll") $api -Force
 Copy-Item (Join-Path $here "coopnet.dll") (Join-Path $GameDir "coopnet.dll") -Force
 Copy-Item (Join-Path $here "play-coop.bat") (Join-Path $GameDir "play-coop.bat") -Force
+Copy-Item (Join-Path $here "lobby.exe") (Join-Path $GameDir "lobby.exe") -Force
 Set-Content -Path (Join-Path $GameDir "steam_appid.txt") -Value "214490" -Encoding ascii -NoNewline
-"installed wrapper, coopnet.dll, steam_appid.txt, play-coop.bat"
+"installed wrapper, coopnet.dll, steam_appid.txt, play-coop.bat, lobby.exe"
 
 $saves = Join-Path $GameDir "coop_saves\default"
 if (-not $NoSaveImport -and -not (Test-Path $saves)) {
@@ -73,4 +74,4 @@ if (-not $NoSaveImport -and -not (Test-Path $saves)) {
     if ($src) { Copy-Item (Join-Path $src.FullName "*") $saves; "copied your Steam saves into coop_saves\default (originals untouched)" }
     else { "no Steam saves found; co-op starts a new game" }
 }
-"Done. Start co-op with play-coop.bat in the game folder (see README)."
+"Done. Start co-op with lobby.exe in the game folder (or play-coop.bat, see README)."

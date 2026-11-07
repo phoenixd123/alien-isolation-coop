@@ -25,6 +25,7 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Co-op saves kept apart from your normal Steam Cloud saves | works |
 | Achievements and stats blocked while modded | works (offline test) |
 | Partner marker (name, distance, arrow when off-screen) | works |
+| LAN lobby (`lobby.exe`): find each other on the network, ready up, both games start connected | lobby tested offline (57 checks, real UDP and TCP on one PC); not yet run between two PCs or through to the game |
 | Host/join over Steam by Steam ID (no port forwarding) | works with the real Steam client, one account. Two accounts not tried yet |
 | Host/join over UDP | works on one PC. Over the internet the host needs UDP 45500 open |
 | Doors your partner opens open for you too | works |
@@ -49,7 +50,8 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
    `powershell -ExecutionPolicy Bypass -File install.ps1`.
    It finds the game through Steam, checks the version (other builds are refused unless you pass `-Force`),
    backs up `steam_api.dll`, and copies your saves into `coop_saves\default`. Your real saves aren't touched.
-3. With Steam running, from the game folder:
+3. With Steam running, start `lobby.exe` in the game folder on both PCs (see [Lobby](#lobby-lan) below).
+   Or skip the lobby and use `play-coop.bat`:
    - Host: `play-coop.bat steam-host`. Your Steam ID shows in the top left of the game window and in
      `coop_logs\my_steam_id.txt`. Send it to your friend.
    - Friend: `play-coop.bat steam-join <host's Steam ID>`
@@ -61,6 +63,25 @@ fullscreen can hide the overlay.
 
 To uninstall: `powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall`. That puts the original
 `steam_api.dll` back. Co-op saves stay in `coop_saves`.
+
+### Lobby (LAN)
+
+| Finding a game | Ready to start |
+|---|---|
+| ![Lobby: games on your network](docs/img/lobby.png) | ![Lobby: both players ready](docs/img/lobby_ready.png) |
+
+1. Type your name and pick how your partner sees you.
+2. One of you presses **Host a game**. It shows up on the other PC under *Games on your network*; press **Join**.
+   On a VPN LAN (ZeroTier, Radmin and the like) or another subnet where it doesn't show up, type the host's
+   address under *Join by address*. The host's address is on their lobby screen.
+3. The lobby checks that you both have the same mod build, game build and save. If your saves differ, the
+   joiner can press **Copy host's save**. Their own save is moved to `coop_saves\backup\` first.
+4. The joiner presses **Ready**, the host presses **Start**. After a 3 second countdown both games open, already
+   set to connect. Load the same save on both.
+
+The lobby uses UDP 45501 to find games and TCP on its own port for the save copy; the game itself uses UDP
+45500. Windows Firewall asks about `lobby.exe` and `AI.exe` the first time: allow them on private networks.
+Steam lobbies and invites are next, using the same lobby protocol (see [docs/online.md](docs/online.md)).
 
 ### Split screen (Couchlink)
 
@@ -122,7 +143,7 @@ changed, none failed. TECH_COMMS is skipped because CathodeLib can't read all of
 - Only deaths that go through the game's normal death script are caught. If one slips through you just get
   the regular game-over menu (look for `life: player died` in the log).
 - Spectating updates 20 times a second, so fast turns look a bit stepped. You don't see your partner's HUD.
-- UDP mode has no NAT punching; use Steam mode over the internet.
+- UDP mode has no NAT punching; use Steam mode over the internet. The lobby is LAN only for now.
 - Two copies on one Steam account can't reach each other over Steam, so local testing uses UDP.
 - Fullscreen copies minimise when they lose focus.
 - A new profile starts with the brightness screen.
@@ -175,7 +196,8 @@ Needs [Zig 0.16.0](https://ziglang.org/download/).
 .\build.ps1 -Zig C:\path\to\zig.exe
 ```
 
-That builds both DLLs, runs the offline tests and writes `build\alien-isolation-coop.zip` with
+That builds both DLLs and `lobby.exe`, runs the offline tests, renders the overlay and lobby screens to
+`build\ui\` and `build\lobby\`, and writes `build\alien-isolation-coop.zip` with
 `build\SHA256SUMS.txt`.
 
 To try a build without the installer, copy the whole game folder somewhere else first (don't use your real
@@ -191,7 +213,7 @@ second copy). Logs go to `coop_logs\`.
 3. A death by the alien, then a full mission with two players.
 4. Two PCs, two Steam accounts.
 5. Run the recipe inside Couchlink.
-6. Lobbies and invites ([docs/online.md](docs/online.md)).
+6. Steam lobbies and invites, on the same lobby protocol as the LAN lobby ([docs/online.md](docs/online.md)).
 7. More world sync: terminals, rewiring, cutscenes.
 
 ## Credits

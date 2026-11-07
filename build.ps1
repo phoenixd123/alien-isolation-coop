@@ -36,6 +36,13 @@ Z -O2 -Wall -Wextra -o "$out\skin_test.exe" "$root\coopnet\test\skin_test.c"
 & "$out\skin_test.exe"; if ($LASTEXITCODE) { throw "skin_test failed" }
 Z -O2 -Wall -Wextra -o "$out\hud_test.exe" "$root\coopnet\test\hud_test.c"
 & "$out\hud_test.exe"; if ($LASTEXITCODE) { throw "hud_test failed" }
+# lobby: launcher window, its screens rendered to images (build\lobby\), and the protocol/LAN test on loopback
+Z -O2 -Wall -Wextra "-Wl,--subsystem,windows" -o "$out\lobby.exe" "$root\lobby\lobby.c" "$root\lobby\lobbyui.c" "$root\lobby\lobbynet.c" -lgdiplus -lgdi32 -luser32 -lws2_32
+New-Item -ItemType Directory -Force "$out\lobby" | Out-Null
+Z -O2 -Wall -Wextra -o "$out\lobby_preview.exe" "$root\lobby\test\lobby_preview.c" "$root\lobby\lobbyui.c" "$root\lobby\lobbynet.c" -lgdiplus -lgdi32 -lws2_32
+& "$out\lobby_preview.exe" "$out\lobby" | Out-Null; if ($LASTEXITCODE) { throw "lobby_preview failed" }
+Z -O2 -Wall -Wextra -o "$out\lobby_test.exe" "$root\lobby\test\lobby_test.c" "$root\lobby\lobbynet.c" -lws2_32
+& "$out\lobby_test.exe"; if ($LASTEXITCODE) { throw "lobby_test failed" }
 # Steam P2P transport against a fake steam_api that checks the MSVC argument layout
 $st = Join-Path $out "stest"
 if (Test-Path $st) { Remove-Item -Recurse -Force $st }
@@ -50,7 +57,7 @@ if ($rc) { throw "steamnet_test failed" }
 $pkg = Join-Path $out "alien-isolation-coop"
 if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
 New-Item -ItemType Directory -Force $pkg | Out-Null
-Copy-Item "$out\steam_api.dll", "$out\coopnet.dll", "$root\dist\install.ps1", "$root\dist\play-coop.bat", "$root\README.md", "$root\LICENSE" $pkg
+Copy-Item "$out\steam_api.dll", "$out\coopnet.dll", "$out\lobby.exe", "$root\dist\install.ps1", "$root\dist\play-coop.bat", "$root\README.md", "$root\LICENSE" $pkg
 Copy-Item -Recurse "$root\dist\couchlink" (Join-Path $pkg "couchlink")
 Copy-Item -Recurse "$root\third_party" (Join-Path $pkg "third_party")
 $zip = Join-Path $out "alien-isolation-coop.zip"
