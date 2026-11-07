@@ -129,15 +129,16 @@ static void banner(Ctx *c, const char *label, const char *big, ARGB col, const c
     if (sub) text(c, sub, cx, y + 66 * s, 13 * s, with_a(INK, 200), 0, 2 * s, CENTER, 0);
 }
 
-static void hint_f9(Ctx *c, float give_up) {
+static void hint_hold(Ctx *c, const char *label, float prog, ARGB col) {
     float s = c->s, cx = c->W * 0.5f, y = c->H - 70 * s;
-    text(c, "HOLD F9 TO RETURN TO THE LAST CHECKPOINT", cx, y, 13 * s, with_a(INK, 170), 0, 2 * s, CENTER, 0);
-    if (give_up > 0.01f) {
+    text(c, label, cx, y, 13 * s, with_a(INK, 170), 0, 2 * s, CENTER, 0);
+    if (prog > 0.01f) {
         float w = 320 * s;
         fill(c, C(150, 0, 0, 0), cx - w / 2, y + 22 * s, w, 6 * s);
-        fill(c, AMBER, cx - w / 2, y + 22 * s, w * (give_up > 1 ? 1 : give_up), 6 * s);
+        fill(c, col, cx - w / 2, y + 22 * s, w * (prog > 1 ? 1 : prog), 6 * s);
     }
 }
+static void hint_f9(Ctx *c, float give_up) { hint_hold(c, "HOLD F9 TO RETURN TO THE LAST CHECKPOINT", give_up, AMBER); }
 
 /* ---------- screens ---------- */
 void ui_render(const UiFrame *f, uint32_t *argb, int W, int H) {
@@ -185,15 +186,22 @@ void ui_render(const UiFrame *f, uint32_t *argb, int W, int H) {
         chip(&c, "CO-OP LINK", AMBER, a, INK, f->steam ? b : NULL, with_a(INK, 190), 1);
     } else if (!f->me_in_level) {
         snprintf(a, sizeof a, "%s CONNECTED", nm);
-        chip(&c, "CO-OP LINK", GREEN, a, INK, "LOAD A SAVE TO PLAY TOGETHER", with_a(INK, 190), 0);
+        if (f->build_bad) chip(&c, "CO-OP LINK", RED, f->build_bad & 1 ? "DIFFERENT MOD BUILD" : "DIFFERENT GAME BUILD", RED,
+                               "INSTALL THE SAME RELEASE ON BOTH PCS", with_a(INK, 190), 1);
+        else chip(&c, "CO-OP LINK", GREEN, a, INK, "LOAD A SAVE TO PLAY TOGETHER", with_a(INK, 190), 0);
     } else {
         if (f->mk_show && !f->peer_dead) marker(&c, f);
         float R = H / 9.f; if (R < 60) R = 60;
         tracker(&c, 24 * s + 14 * s + R, H - 130.f * H / 1080.f - 30 * s - R, R,   /* above the game's health bar */ f->me_p, f->me_f, f->blips, f->nblips, "MOTION");
+        if (f->regroup > 0.01f) { snprintf(a, sizeof a, "HOLD F7 TO GO TO %s", nm); hint_hold(&c, a, f->regroup, GREEN); }
+        if (f->build_bad) {
+            chip(&c, "CO-OP LINK", RED, f->build_bad & 1 ? "DIFFERENT MOD BUILD" : "DIFFERENT GAME BUILD", RED,
+                 "WORLD SYNC IS OFF UNTIL YOU BOTH MATCH", with_a(INK, 190), 1);
+        }
         if (f->peer_dead) {
             snprintf(a, sizeof a, "%s IS DOWN", nm);
             banner(&c, "WARNING", a, RED, "THEY ARE WATCHING YOU. STAY ALIVE.");
-        } else if (f->far_apart) {
+        } else if (f->far_apart && !f->build_bad) {
             snprintf(a, sizeof a, "%s  OUT OF RANGE", nm);
             chip(&c, "SIGNAL WEAK", AMBER, a, AMBER, NULL, 0, 1);
         }
@@ -201,6 +209,9 @@ void ui_render(const UiFrame *f, uint32_t *argb, int W, int H) {
     if (f->flash_t && f->now - f->flash_t < 2000u) vignette(&c, RED, (int)(130 * (1.f - (f->now - f->flash_t) / 2000.f)), 170 * s);
     if (f->both_t && f->now - f->both_t < 5000u && !f->spect) banner(&c, "BOTH DOWN", "RETURNING TO CHECKPOINT", RED, NULL);
     if (f->cut_t && f->now - f->cut_t < 3500u && !f->spect) { snprintf(a, sizeof a, "JOINING %s", nm); banner(&c, "CUTSCENE", a, GREEN, "MOVED TO YOUR PARTNER FOR THE SCENE"); }
+    else if (f->regroup_t && f->now - f->regroup_t < 3000u && !f->spect) { snprintf(a, sizeof a, "WITH %s", nm); banner(&c, "REGROUPED", a, GREEN, NULL); }
+    else if (f->coming_t && f->now - f->coming_t < 3000u && !f->spect) { snprintf(a, sizeof a, "%s IS COMING TO YOU", nm); banner(&c, "REGROUP", a, GREEN, NULL); }
+    if (f->fade > 0.001f) fill(&c, with_a(C(255, 0, 0, 0), (int)(f->fade * 255)), 0, 0, (float)W, (float)H);
 
     GdipDeleteBrush(c.br); GdipDeletePen(c.pen); GdipDeleteGraphics(c.g); GdipDisposeImage(bmp);
 }

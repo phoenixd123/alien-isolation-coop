@@ -28,7 +28,8 @@ static HDC g_memdc; static HBITMAP g_dib; static uint32_t *g_px;
 static LbHit g_hits[LB_MAXHITS]; static int g_nhits;
 
 static char g_dir[MAX_PATH], g_ini[MAX_PATH], g_saves[MAX_PATH], g_backup[MAX_PATH], g_profile[64];
-static char g_name[24], g_ip[24], g_skin[24], g_version[48];
+static char g_name[24], g_ip[24], g_skin[24], g_version[48], g_friend[24];
+static int g_tab;
 static int g_bodies, g_focus, g_hover, g_screen = LS_MAIN, g_launched;
 static DWORD g_launch_t;
 static char g_toast[128]; static int g_toast_bad; static DWORD g_toast_t;
@@ -46,6 +47,8 @@ static void save_ini(void) {
     WritePrivateProfileStringA("lobby", "skin", g_skin, g_ini);
     WritePrivateProfileStringA("lobby", "bodies", g_bodies ? "1" : "0", g_ini);
     WritePrivateProfileStringA("lobby", "last_address", g_ip, g_ini);
+    WritePrivateProfileStringA("lobby", "steam_friend", g_friend, g_ini);
+    WritePrivateProfileStringA("lobby", "tab", g_tab ? "internet" : "lan", g_ini);
 }
 
 /* Who we are, with fresh fingerprints (the save changes after a copy). */
@@ -126,9 +129,34 @@ static void launch(void) {
     lbnet_stop_saves(&g_net);
 }
 
+static void steam_launch(int host) {
+    if (!need_name()) return;
+    uint64_t friend_id = 0;
+    if (!host && !lb_parse_steam_id(g_friend, &friend_id)) { toast("THAT ISN'T A STEAM ID. IT'S 17 DIGITS STARTING 7656119", 1); return; }
+    if (!lbnet_my_steam_id()) { toast("START STEAM FIRST", 1); return; }
+    save_ini();
+    LbLaunch l; memset(&l, 0, sizeof l);
+    l.host = host; l.steam = 1; l.peer_steam = friend_id;
+    l.name = g_name; l.skin = g_skin; l.skins = g_bodies;
+    l.profile = g_profile[0] && strcmp(g_profile, "default") ? g_profile : NULL;
+    char err[96];
+    if (!lb_launch_game(g_dir, &l, err, sizeof err)) { toast(err, 1); return; }
+    toast(host ? "STARTING THE GAME. YOUR STEAM ID SHOWS IN IT TOO" : "STARTING THE GAME AND CONNECTING", 0);
+    g_launched = 1; g_launch_t = GetTickCount();
+}
+static void copy_steam_id(void) {
+    uint64_t id = lbnet_my_steam_id();
+    if (!id || !OpenClipboard(g_wnd)) return;
+    char t[24]; int n = snprintf(t, sizeof t, "%llu", (unsigned long long)id);
+    HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)n + 1);
+    if (h) { memcpy(GlobalLock(h), t, (size_t)n + 1); GlobalUnlock(h); EmptyClipboard(); SetClipboardData(CF_TEXT, h); }
+    CloseClipboard();
+    toast("STEAM ID COPIED. SEND IT TO YOUR FRIEND", 0);
+}
+
 static void click(int id) {
     uint32_t now = now_ms();
-    g_focus = (id == LH_NAME || id == LH_IP) ? id : 0;
+    g_focus = (id == LH_NAME || id == LH_IP || id == LH_STEAMID) ? id : 0;
     switch (id) {
     case LH_CLOSE: PostMessageA(g_wnd, WM_CLOSE, 0, 0); break;
     case LH_MIN: ShowWindow(g_wnd, SW_MINIMIZE); break;
@@ -136,6 +164,11 @@ static void click(int id) {
     case LH_SKIN_NEXT: cycle_skin(1); break;
     case LH_BODIES: g_bodies = !g_bodies; save_ini(); break;
     case LH_HOST: do_host(); break;
+    case LH_TAB_LAN: g_tab = 0; save_ini(); break;
+    case LH_TAB_NET: g_tab = 1; save_ini(); break;
+    case LH_COPY_ID: copy_steam_id(); break;
+    case LH_STEAM_HOST: steam_launch(1); break;
+    case LH_STEAM_JOIN: steam_launch(0); break;
     case LH_JOIN_IP: do_join_ip(); break;
     case LH_LEAVE: lb_leave(&g_L, lbnet_send, &g_net); go_main(); break;
     case LH_READY:
@@ -190,6 +223,9 @@ static void paint(void) {
     v.now = now_ms(); v.screen = g_screen; v.version = g_version;
     v.name = g_name; v.ip_text = g_ip; v.focus = g_focus; v.skin = g_skin; v.bodies = g_bodies;
     v.found = g_L.found; v.nfound = g_L.nfound; v.me_main = &g_me;
+    static uint64_t sid; static uint32_t sid_t;
+    if (!sid_t || v.now - sid_t > 3000) { sid = lbnet_my_steam_id(); sid_t = v.now | 1; }
+    uint64_t fid; v.tab = g_tab; v.my_steam = sid; v.friend_text = g_friend; v.friend_ok = lb_parse_steam_id(g_friend, &fid);
     v.L = &g_L; v.copy = &g_copy;
     static uint32_t ip, ip_t;
     if (!ip_t || v.now - ip_t > 5000) { ip = lbnet_local_ip(); ip_t = v.now | 1; }
@@ -205,15 +241,15 @@ static void paint(void) {
 }
 
 static void type_char(unsigned ch) {
-    char *buf = g_focus == LH_NAME ? g_name : g_focus == LH_IP ? g_ip : NULL;
+    char *buf = g_focus == LH_NAME ? g_name : g_focus == LH_IP ? g_ip : g_focus == LH_STEAMID ? g_friend : NULL;
     if (!buf) return;
-    int cap = g_focus == LH_NAME ? 20 : 15, n = (int)strlen(buf);
+    int cap = g_focus == LH_NAME ? 20 : g_focus == LH_STEAMID ? 17 : 15, n = (int)strlen(buf);
     if (ch == 8) { if (n) buf[n - 1] = 0; }
-    else if (ch == 13) { if (g_focus == LH_IP) do_join_ip(); g_focus = 0; }
+    else if (ch == 13) { if (g_focus == LH_IP) do_join_ip(); else if (g_focus == LH_STEAMID) steam_launch(0); g_focus = 0; }
     else if (ch == 27) g_focus = 0;
-    else if (ch == 9) g_focus = g_focus == LH_NAME ? LH_IP : LH_NAME;
+    else if (ch == 9) g_focus = g_focus == LH_NAME ? (g_tab ? LH_STEAMID : LH_IP) : LH_NAME;
     else if (n < cap) {
-        int ok = g_focus == LH_NAME ? (ch >= 32 && ch < 127) : ((ch >= '0' && ch <= '9') || ch == '.');
+        int ok = g_focus == LH_NAME ? (ch >= 32 && ch < 127) : g_focus == LH_STEAMID ? (ch >= '0' && ch <= '9') : ((ch >= '0' && ch <= '9') || ch == '.');
         if (ok) { buf[n] = (char)ch; buf[n + 1] = 0; }
     }
     if (g_focus == 0 || ch == 13) save_ini();
@@ -272,6 +308,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     GetPrivateProfileStringA("lobby", "name", "", g_name, sizeof g_name, g_ini);
     GetPrivateProfileStringA("lobby", "skin", "TAYLOR", g_skin, sizeof g_skin, g_ini);
     GetPrivateProfileStringA("lobby", "last_address", "", g_ip, sizeof g_ip, g_ini);
+    GetPrivateProfileStringA("lobby", "steam_friend", "", g_friend, sizeof g_friend, g_ini);
+    { char t[16]; GetPrivateProfileStringA("lobby", "tab", "lan", t, sizeof t, g_ini); g_tab = !strcmp(t, "internet"); }
     g_bodies = GetPrivateProfileIntA("lobby", "bodies", 0, g_ini) != 0;
     lb_clean(g_name, sizeof g_name);
     { const Skin *k = skin_find(g_skin); if (!k || k->experimental) lstrcpynA(g_skin, "TAYLOR", sizeof g_skin); }

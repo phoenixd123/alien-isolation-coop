@@ -47,3 +47,25 @@ static inline int cut_should_follow(int alive, int in_level, float dist, int32_t
     if (since_my_cut >= 0 && since_my_cut < CUT_BOTH_MS) return !am_host;   /* we both did: the joiner moves */
     return 1;
 }
+
+/* Regroup (hold F7): you ask, your partner answers with a landing spot from their trail (same CutPkt, see `flags`),
+   and you're moved there. Allowed while you're alive, in a level and not already close. */
+#define CUT_SCENE        0        /* CutPkt.flags: a cutscene started, come here */
+#define CUT_REGROUP_ASK  1        /* "I want to come to you" */
+#define CUT_REGROUP_SPOT 2        /* the answer: land here */
+#define REGROUP_HOLD_MS  1500
+#define REGROUP_GAP_MS   10000
+static inline int regroup_ok(int alive, int in_level, float dist) {
+    return alive && in_level && dist == dist && dist >= CUT_NEAR_M;
+}
+
+/* Fade around a teleport: dark over TP_FADE_OUT_MS, the move happens at full dark, then back over TP_FADE_IN_MS.
+   Returns the darkness 0..1 at `ms` after the fade started. */
+#define TP_FADE_OUT_MS 250
+#define TP_FADE_IN_MS  450
+static inline float tp_fade(int32_t ms) {
+    if (ms < 0) return 0.f;
+    if (ms < TP_FADE_OUT_MS) return (float)ms / TP_FADE_OUT_MS;
+    if (ms < TP_FADE_OUT_MS + TP_FADE_IN_MS) return 1.f - (float)(ms - TP_FADE_OUT_MS) / TP_FADE_IN_MS;
+    return 0.f;
+}

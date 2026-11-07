@@ -8,6 +8,7 @@
 enum {
     LH_NONE, LH_CLOSE, LH_MIN, LH_NAME, LH_SKIN_PREV, LH_SKIN_NEXT, LH_BODIES, LH_HOST, LH_IP, LH_JOIN_IP,
     LH_LEAVE, LH_READY, LH_START, LH_KICK, LH_COPY,
+    LH_TAB_LAN, LH_TAB_NET, LH_STEAMID, LH_COPY_ID, LH_STEAM_HOST, LH_STEAM_JOIN,
     LH_ROW = 100   /* + index into the found list */
 };
 #define LB_MAXHITS 48
@@ -24,6 +25,8 @@ typedef struct {
     const char *skin; int bodies;
     const LbFound *found; int nfound;
     const LbPlayer *me_main;                   /* for compat chips in the list */
+    int tab;                                   /* 0 LAN, 1 internet (Steam) */
+    uint64_t my_steam; const char *friend_text; int friend_ok;
     /* lobby */
     const Lobby *L;
     char my_ip[24], peer_ip[24];

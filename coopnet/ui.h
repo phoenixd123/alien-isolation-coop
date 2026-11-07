@@ -38,6 +38,10 @@ typedef struct {
     float peer_p[3], peer_f[2];   /* bio-monitor */
     int alien_ok; float alien_p[3];
     uint32_t cut_t;               /* moved to the partner for a cutscene (same clock as now; 0 = never) */
+    uint32_t regroup_t, coming_t; /* we were moved to the partner (F7) / the partner is coming to us */
+    float regroup;                /* F7 hold progress 0..1 */
+    float fade;                   /* teleport fade, 0..1 darkness */
+    int build_bad;                /* 1 different mod build, 2 different game build (bits): world sync is off */
 } UiFrame;
 
 int ui_init(void);                                             /* GDI+ startup; 0 on failure */

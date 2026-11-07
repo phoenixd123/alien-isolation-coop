@@ -165,6 +165,21 @@ sequenceDiagram
     Note over A,B: you both watch it from the same place
 ```
 
+## Regroup: hold F7
+
+Got separated, or stuck somewhere? Hold **F7** for a second and a half and you're moved to your partner. Your
+game asks theirs for a landing spot (a point they walked through a moment ago, about a metre behind them), the
+screen fades to black, you're moved, and it fades back in. It doesn't work while you're dead, outside a level or
+already next to them, and you can do it once every 10 seconds. Your partner sees *REGROUP: &lt;you&gt; IS COMING TO
+YOU*.
+
+## Same builds or no world sync
+
+Every few seconds each game tells the other which builds it runs: a fingerprint of the mod and of the game's
+`AI.exe`. If they differ, replaying script messages between the two games isn't safe, so world sync stops on both
+sides and the overlay says *DIFFERENT MOD BUILD* (or game build). Everything else (seeing each other, the tracker,
+dying together) keeps working. The lobby makes the same check before you start.
+
 ## The alien
 
 - **One director.** The host's game decides when the alien comes out of the vents, when it retreats and how
@@ -219,7 +234,11 @@ sequenceDiagram
 ```
 
 If the game doesn't show up on the joiner's list (VPN LANs often block broadcasts), type the host's address
-under *Join by address*. The lobby is LAN only for now; Steam lobbies are next.
+under *Join by address*.
+
+Over the internet, the *Internet* tab skips all of that: the host starts their game over Steam and shares their
+Steam ID, the friend types it in, and Steam connects the two games. The ready check and save copy there are still
+to come; the in-game build check covers the most important part.
 
 ## Skins
 
@@ -234,7 +253,6 @@ they're drawn with, into every level. It backs up the originals first; uninstall
 
 ## What it doesn't do (yet)
 
-- The cutscene move is a teleport: the screen just cuts to the new place, there's no fade yet.
 - Things that can happen again and again (riding a lift inside a level, using a terminal twice) aren't shared;
   only saved state and once-only steps are. Start from the same save.
 - Your partner's body walks by being moved, not by playing walking animations.

@@ -37,6 +37,12 @@ enum { LBC_IDLE, LBC_RUNNING, LBC_DONE, LBC_FAILED };
 int  lbnet_fetch_saves(LbAddr host, uint32_t lobby, const char *folder, const char *backup_root, LbCopy *c);
 int  lb_save_name_ok(const char *s);
 
-/* Launch AI.exe from `game_dir` with the co-op settings in its environment. 0 on failure. */
-typedef struct { int host; uint32_t host_ip; const char *name, *skin, *profile; int skins; } LbLaunch;
+/* Internet play over Steam: your own Steam ID (from the running Steam client, 0 if it isn't running) and a
+   friend's typed in (17 digits starting 7656119). */
+uint64_t lbnet_my_steam_id(void);
+int  lb_parse_steam_id(const char *s, uint64_t *id);
+
+/* Launch AI.exe from `game_dir` with the co-op settings in its environment. 0 on failure.
+   steam: over Steam P2P instead of the LAN (host, or join `peer_steam`). */
+typedef struct { int host; uint32_t host_ip; const char *name, *skin, *profile; int skins; int steam; uint64_t peer_steam; } LbLaunch;
 int  lb_launch_game(const char *game_dir, const LbLaunch *l, char *err, int errcap);

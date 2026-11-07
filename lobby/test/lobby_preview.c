@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     buf = malloc((size_t)W * H * 4);
     LbPlayer me = player("Ripley", "TAYLOR", 0xAAAA, 0);
     LbView v; memset(&v, 0, sizeof v);
-    v.version = "V0.2.0  BUILD 1A2B3C4D"; v.me_main = &me;
+    v.version = "V0.3.0  BUILD 1A2B3C4D"; v.me_main = &me;
 
     /* main, nothing found yet, typing a name */
     v.now = 1200; v.screen = LS_MAIN; v.name = "Ripley"; v.ip_text = ""; v.focus = LH_NAME; v.skin = "TAYLOR";
@@ -55,6 +55,13 @@ int main(int argc, char **argv) {
     v.hover = 0; v.ip_text = "10.147.17.4"; v.focus = LH_IP; v.toast = "NO ANSWER FROM 10.147.17.9. CHECK THE ADDRESS AND THE FIREWALL"; v.toast_bad = 1;
     shot("3_join_by_ip", &v);
     v.toast = NULL; v.focus = 0;
+
+    /* internet tab: Steam running, a friend's ID typed in */
+    v.tab = 1; v.my_steam = 76561198012345678ull; v.friend_text = "76561198087654321"; v.friend_ok = 1; v.focus = LH_STEAMID; v.hover = LH_STEAM_JOIN;
+    shot("2b_internet", &v);
+    v.my_steam = 0; v.friend_text = "7656"; v.friend_ok = 0; v.focus = 0; v.hover = 0;
+    shot("2c_internet_no_steam", &v);
+    v.tab = 0;
 
     /* hosting, waiting */
     Lobby L; memset(&L, 0, sizeof L);

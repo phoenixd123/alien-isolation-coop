@@ -76,6 +76,16 @@ int main(int argc, char **argv) {
     f.me_f[0] = 0; f.me_f[1] = 1; f.cut_t = 8200; f.mk_show = 1; f.mk_on = 1; f.mk_sx = W / 2 + 60; f.mk_sy = H / 2; f.mk_dist = 1.1f;
     ui_render(&f, buf, W, H); save(dir, "8_cutscene", buf, W, H);
 
+    /* holding F7 to regroup, partner on a different mod build */
+    memset(&f, 0, sizeof f); f.W = W; f.H = H; f.now = 9500; f.peer_name = "Sam"; f.linked = 1; f.peer_live = 1; f.me_in_level = 1;
+    f.me_f[0] = 0; f.me_f[1] = 1; f.regroup = 0.6f; f.build_bad = 1;
+    f.mk_show = 1; f.mk_on = 0; f.mk_dir[0] = 0.9f; f.mk_dir[1] = 0.2f; f.mk_dist = 63.f;
+    ui_render(&f, buf, W, H); save(dir, "9_regroup", buf, W, H);
+
+    /* mid-teleport fade */
+    f.regroup = 0; f.build_bad = 0; f.fade = 0.7f;
+    ui_render(&f, buf, W, H); save(dir, "10_fade", buf, W, H);
+
     free(buf);
     return 0;
 }

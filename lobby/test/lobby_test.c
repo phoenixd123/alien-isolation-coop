@@ -255,6 +255,12 @@ static void test_misc(void) {
     uint32_t ip;
     CHECK(lbnet_parse_ip("192.168.1.20", &ip) && ip == 0xC0A80114u, "parse ip");
     CHECK(!lbnet_parse_ip("192.168.1", &ip) && !lbnet_parse_ip("1.2.3.256", &ip) && !lbnet_parse_ip("1.2.3.4x", &ip), "bad ips");
+    uint64_t sid = 0;
+    CHECK(lb_parse_steam_id("76561198012345678", &sid) && sid == 76561198012345678ull, "steam id");
+    CHECK(lb_parse_steam_id("  76561198012345678 ", &sid), "steam id with spaces around");
+    CHECK(!lb_parse_steam_id("7656119801234567", &sid) && !lb_parse_steam_id("765611980123456789", &sid), "steam id length");
+    CHECK(!lb_parse_steam_id("76561197960265728", &sid) && !lb_parse_steam_id("99999999999999999", &sid), "not an individual account");
+    CHECK(!lb_parse_steam_id("7656119801234567x", &sid) && !lb_parse_steam_id("", &sid) && !lb_parse_steam_id(NULL, &sid), "junk");
 }
 
 int main(void) {

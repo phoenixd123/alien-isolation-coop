@@ -170,6 +170,9 @@ static int generic_kind(uint32_t m, uint32_t type) {
 }
 static int generic_owner_ok(uint32_t owner, uint32_t eid) { return syncmap_kind(owner, eid) != 0; }
 
+static volatile LONG g_paused;
+void ws_pause(int paused) { InterlockedExchange(&g_paused, paused != 0); }
+
 static void (*g_cut_cb)(void);
 static DWORD g_cut_t;
 void ws_set_cutscene_cb(void (*cb)(void)) { g_cut_cb = cb; }
@@ -253,7 +256,7 @@ void ws_on_call(const uint32_t *msg, const uint32_t *target) {
     if (!msg || !target) return;
     uint32_t m = msg[0], eid = target[3], type = target[4];
     cut_check(m, eid, type, target);
-    if (!g_on) return;
+    if (!g_on || g_paused) return;
     for (int r = 0; r < NRULES; r++) {
         const Rule *R = &RULES[r];
         if (m != R->when.method || (R->when.eid && eid != R->when.eid) || type != R->when.type) continue;
@@ -293,6 +296,7 @@ int ws_pop(WorldEvt *ev) {
 
 void ws_apply(const WorldEvt *ev) {
     if (!g_on) return;
+    if (g_paused) { g_logf("worldsync: ignored a partner event (builds differ)"); return; }
     int ok = 0, level = 0, generic = 0; uint32_t owner = 0, when_eid = ev->eid;
     for (int r = 0; r < NRULES && !ok; r++) {
         if (RULES[r].host_only && g_host) continue;   /* the host's alien is the real one */

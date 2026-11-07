@@ -149,26 +149,53 @@ static inline int proto_check_skin(const SkinPkt *k, int len) {
     return 0;
 }
 
-/* kind 6: a cutscene just started in the sender's game; `pos` is where the receiver should land (cutscene.h).
-   `id` is random per cutscene so the three copies count once. */
+/* kind 6: a teleport message (cutscene.h). flags 0: a cutscene just started in the sender's game, land at `pos`;
+   1: regroup ask ("I want to come to you"); 2: regroup answer (land at `pos`, same id as the ask).
+   `id` is random per message so the three copies count once. */
 #pragma pack(push, 1)
 typedef struct {
     uint32_t magic;
-    uint8_t  version, kind, pad[2];
+    uint8_t  version, kind, flags, pad;
     uint32_t id;
     float    pos[3];
     uint32_t check;
 } CutPkt;
 #pragma pack(pop)
 _Static_assert(sizeof(CutPkt) == 28, "CutPkt must be 28 bytes");
-static inline void proto_fill_cut(CutPkt *k, uint32_t id, const float pos[3]) {
+static inline void proto_fill_cut(CutPkt *k, uint32_t id, const float pos[3], int flags) {
     memset(k, 0, sizeof *k);
-    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 6; k->id = id; memcpy(k->pos, pos, 12);
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 6; k->flags = (uint8_t)flags; k->id = id; memcpy(k->pos, pos, 12);
     k->check = proto_sum(k, offsetof(CutPkt, check));
 }
 static inline int proto_check_cut(const CutPkt *k, int len) {
-    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 6 || !k->id) return 0;
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 6 || !k->id || k->flags > 2) return 0;
     if (k->check != proto_sum(k, offsetof(CutPkt, check))) return 0;
     for (int i = 0; i < 3; i++) if (!(k->pos[i] == k->pos[i]) || k->pos[i] > 5000.f || k->pos[i] < -5000.f) return 0;
     return 1;
+}
+
+/* kind 8: which builds the sender runs (hash of coopnet.dll, AI.exe timestamp and size). Every 3 s. Different
+   builds turn world sync off on both sides: replaying script messages between different builds isn't safe. */
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;
+    uint8_t  version, kind, pad[2];
+    uint32_t mod, game;
+    uint32_t check;
+} BuildPkt;
+#pragma pack(pop)
+_Static_assert(sizeof(BuildPkt) == 20, "BuildPkt must be 20 bytes");
+static inline void proto_fill_build(BuildPkt *k, uint32_t mod, uint32_t game) {
+    memset(k, 0, sizeof *k);
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 8; k->mod = mod; k->game = game;
+    k->check = proto_sum(k, offsetof(BuildPkt, check));
+}
+static inline int proto_check_build(const BuildPkt *k, int len) {
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 8) return 0;
+    return k->check == proto_sum(k, offsetof(BuildPkt, check));
+}
+/* What differs (1 mod build, 2 game build), from our and the partner's BuildPkt. 0 if either side is unknown. */
+static inline int proto_build_diff(uint32_t my_mod, uint32_t my_game, const BuildPkt *k) {
+    if (!my_mod || !my_game || !k->mod || !k->game) return 0;
+    return (my_mod != k->mod ? 1 : 0) | (my_game != k->game ? 2 : 0);
 }

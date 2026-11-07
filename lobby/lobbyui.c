@@ -109,7 +109,7 @@ static void titlebar(Ui *u, const LbView *v) {
     disc(c, GREEN, 22 * s, 22 * s, 4 * s);
     float x = 36 * s + text(c, "ISOLATION CO-OP", 36 * s, 13 * s, 16 * s, GREEN, 1, 5 * s, LEFT, 1);
     x += 16 * s;
-    text(c, "// LAN LOBBY", x, 15 * s, 13 * s, GREEN_LO, 1, 4 * s, LEFT, 0);
+    text(c, "// LOBBY", x, 15 * s, 13 * s, GREEN_LO, 1, 4 * s, LEFT, 0);
     if (v->version) text(c, v->version, W - 110 * s, 16 * s, 11 * s, GREEN_LO, 1, 2 * s, RIGHT, 0);
     /* minimise and close */
     float bw = 44 * s;
@@ -186,21 +186,61 @@ static void screen_main(Ui *u, const LbView *v) {
         }
     }
 
-    /* host */
+    /* host (LAN; internet games are hosted from the right panel) */
     float hy = top + ph - 112 * s;
     line(c, with_a(GREEN, 50), 1, lx + 20 * s, hy - 18 * s, lx + lw - 20 * s, hy - 18 * s);
-    button(u, LH_HOST, lx + 20 * s, hy, lw - 40 * s, 56 * s, "HOST A GAME", B_PRIMARY, 1);
-    text(c, "PLAYERS ON YOUR NETWORK SEE IT", lx + lw / 2, hy + 68 * s, 11 * s, GREEN_LO, 0, 2 * s, CENTER, 0);
+    if (!v->tab) {
+        button(u, LH_HOST, lx + 20 * s, hy, lw - 40 * s, 56 * s, "HOST A GAME", B_PRIMARY, 1);
+        text(c, "PLAYERS ON YOUR NETWORK SEE IT", lx + lw / 2, hy + 68 * s, 11 * s, GREEN_LO, 0, 2 * s, CENTER, 0);
+    } else {
+        text(c, "PLAYING OVER THE INTERNET:", lx + lw / 2, hy + 12 * s, 11 * s, GREEN_LO, 1, 2 * s, CENTER, 0);
+        text(c, "HOST OR JOIN ON THE RIGHT", lx + lw / 2, hy + 32 * s, 11 * s, GREEN_LO, 1, 2 * s, CENTER, 0);
+    }
 
-    /* right: games on the network */
+    /* right: tabs, then games on the network or Steam */
     float rx = lx + lw + 22 * s, rw = W - rx - 24 * s;
     panel(c, rx, top, rw, ph, GREEN);
+    {   /* tabs in the panel header */
+        float tw = 140 * s, th = 30 * s, ty = top + 12 * s;
+        for (int t = 0; t < 2; t++) {
+            float tx = rx + 16 * s + t * (tw + 6 * s);
+            int on = v->tab == t, hot = u->hover == (t ? LH_TAB_NET : LH_TAB_LAN);
+            fill(c, on ? with_a(GREEN, 50) : hot ? with_a(GREEN, 26) : C(160, 2, 10, 7), tx, ty, tw, th);
+            if (on) fill(c, GREEN, tx, ty + th - 2 * s, tw, 2 * s);
+            text(c, t ? "INTERNET" : "LAN", tx + tw / 2, ty + 8 * s, 12 * s, on ? GREEN : DIM, 1, 4 * s, CENTER, on);
+            add_hit(u, t ? LH_TAB_NET : LH_TAB_LAN, tx, ty, tw, th);
+        }
+        line(c, with_a(GREEN, 50), 1, rx + 16 * s, ty + th, rx + rw - 16 * s, ty + th);
+    }
+    float rtop = top + 40 * s;   /* below the tabs */
+    if (v->tab) {
+        section(c, rx + 20 * s, rtop + 18 * s, "PLAY OVER STEAM", NULL);
+        text(c, "NO ADDRESSES, NO PORT FORWARDING. YOU EACH NEED YOUR OWN STEAM ACCOUNT.", rx + 20 * s, rtop + 44 * s, 11 * s, DIM, 0, 1 * s, LEFT, 0);
+        float y2 = rtop + 76 * s;
+        text(c, "YOUR STEAM ID", rx + 20 * s, y2, 11 * s, GREEN_LO, 1, 3 * s, LEFT, 0);
+        char sid[32];
+        if (v->my_steam) snprintf(sid, sizeof sid, "%llu", (unsigned long long)v->my_steam); else snprintf(sid, sizeof sid, "START STEAM FIRST");
+        text(c, sid, rx + 20 * s, y2 + 20 * s, 24 * s, v->my_steam ? INK : AMBER, 1, 3 * s, LEFT, 1);
+        button(u, LH_COPY_ID, rx + rw - 20 * s - 120 * s, y2 + 14 * s, 120 * s, 40 * s, "COPY", B_NORMAL, v->my_steam != 0);
+        float y3 = y2 + 82 * s;
+        line(c, with_a(GREEN, 50), 1, rx + 20 * s, y3 - 14 * s, rx + rw - 20 * s, y3 - 14 * s);
+        button(u, LH_STEAM_HOST, rx + 20 * s, y3, rw - 40 * s, 52 * s, "HOST OVER STEAM", B_PRIMARY, v->my_steam != 0);
+        text(c, "SEND YOUR FRIEND YOUR STEAM ID. THE GAME OPENS AND WAITS FOR THEM.", rx + rw / 2, y3 + 62 * s, 10 * s, GREEN_LO, 0, 1 * s, CENTER, 0);
+        float y4 = y3 + 104 * s;
+        line(c, with_a(GREEN, 50), 1, rx + 20 * s, y4 - 14 * s, rx + rw - 20 * s, y4 - 14 * s);
+        float jbw = 170 * s;
+        field(u, LH_STEAMID, rx + 20 * s, y4, rw - 40 * s - jbw - 12 * s, "YOUR FRIEND'S STEAM ID", v->friend_text, "76561198...", v->focus == LH_STEAMID);
+        button(u, LH_STEAM_JOIN, rx + rw - 20 * s - jbw, y4 + 18 * s, jbw, 40 * s, "JOIN", v->friend_ok ? B_PRIMARY : B_NORMAL, v->friend_ok && v->my_steam != 0);
+        text(c, "LOAD THE SAME SAVE. THE GAME CHECKS YOUR BUILDS WHEN YOU CONNECT.", rx + 20 * s, top + ph - 26 * s, 10 * s, DIM, 0, 1 * s, LEFT, 0);
+        footer(c, v, "STEAM MUST BE RUNNING ON BOTH PCS.");
+        return;
+    }
     char cnt[32]; snprintf(cnt, sizeof cnt, v->nfound == 1 ? "1 GAME" : "%d GAMES", v->nfound);
-    section(c, rx + 20 * s, top + 18 * s, "GAMES ON YOUR NETWORK", NULL);
-    text(c, cnt, rx + rw - 20 * s, top + 20 * s, 11 * s, GREEN_LO, 1, 2 * s, RIGHT, 0);
-    if ((c->now / 500u) % 2) disc(c, GREEN, rx + rw - 30 * s - text_w(c, cnt, 11 * s, 1, 2 * s), top + 26 * s, 3 * s);
+    section(c, rx + 20 * s, rtop + 18 * s, "GAMES ON YOUR NETWORK", NULL);
+    text(c, cnt, rx + rw - 20 * s, rtop + 20 * s, 11 * s, GREEN_LO, 1, 2 * s, RIGHT, 0);
+    if ((c->now / 500u) % 2) disc(c, GREEN, rx + rw - 30 * s - text_w(c, cnt, 11 * s, 1, 2 * s), rtop + 26 * s, 3 * s);
 
-    float ly = top + 54 * s, rowh = 62 * s, listh = ph - 54 * s - 110 * s;
+    float ly = rtop + 54 * s, rowh = 62 * s, listh = ph - 94 * s - 110 * s;
     if (v->nfound == 0) {
         float cy = ly + listh / 2 - 20 * s;
         scope(c, rx + rw / 2, cy, 54 * s);

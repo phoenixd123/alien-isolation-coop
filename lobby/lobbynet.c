@@ -345,14 +345,41 @@ int lbnet_fetch_saves(LbAddr host, uint32_t lobby, const char *folder, const cha
     return 1;
 }
 
+/* ---------- Steam IDs ---------- */
+uint64_t lbnet_my_steam_id(void) {
+    HKEY k; DWORD v = 0, n = sizeof v, t = 0;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Valve\\Steam\\ActiveProcess", 0, KEY_READ, &k) != ERROR_SUCCESS) return 0;
+    LONG r = RegQueryValueExA(k, "ActiveUser", NULL, &t, (LPBYTE)&v, &n);
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS && t == REG_DWORD && v ? 76561197960265728ull + v : 0;
+}
+int lb_parse_steam_id(const char *s, uint64_t *id) {
+    if (!s) return 0;
+    while (*s == ' ') s++;
+    uint64_t v = 0; int n = 0;
+    for (; *s >= '0' && *s <= '9'; s++, n++) { if (n >= 17) return 0; v = v * 10 + (uint64_t)(*s - '0'); }
+    while (*s == ' ') s++;
+    if (*s || n != 17 || v <= 76561197960265728ull || v > 76561202255233023ull) return 0;   /* individual accounts */
+    *id = v;
+    return 1;
+}
+
 /* ---------- launch ---------- */
 int lb_launch_game(const char *game_dir, const LbLaunch *l, char *err, int errcap) {
     char exe[MAX_PATH]; snprintf(exe, sizeof exe, "%s\\AI.exe", game_dir);
     if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) { snprintf(err, (size_t)errcap, "AI.EXE NOT FOUND NEXT TO THE LOBBY"); return 0; }
     char peer[32];
-    SetEnvironmentVariableA("AIC_COOP_MODE", l->host ? "host" : "join");
-    if (l->host) SetEnvironmentVariableA("AIC_COOP_PEER", NULL);
-    else { lbnet_ip_str(l->host_ip, peer, sizeof peer); snprintf(peer + strlen(peer), sizeof peer - strlen(peer), ":%d", LB_GAME_PORT); SetEnvironmentVariableA("AIC_COOP_PEER", peer); }
+    if (l->steam) {
+        SetEnvironmentVariableA("AIC_COOP_MODE", l->host ? "steam-host" : "steam-join");
+        SetEnvironmentVariableA("AIC_COOP_PEER", NULL);
+        if (l->host) SetEnvironmentVariableA("AIC_COOP_PEER_STEAM", NULL);
+        else { char sid[24]; snprintf(sid, sizeof sid, "%llu", (unsigned long long)l->peer_steam); SetEnvironmentVariableA("AIC_COOP_PEER_STEAM", sid); }
+    } else {
+        SetEnvironmentVariableA("AIC_COOP_MODE", l->host ? "host" : "join");
+        SetEnvironmentVariableA("AIC_COOP_PEER_STEAM", NULL);
+        if (l->host) SetEnvironmentVariableA("AIC_COOP_PEER", NULL);
+        else { lbnet_ip_str(l->host_ip, peer, sizeof peer); snprintf(peer + strlen(peer), sizeof peer - strlen(peer), ":%d", LB_GAME_PORT); SetEnvironmentVariableA("AIC_COOP_PEER", peer); }
+    }
     SetEnvironmentVariableA("AIC_COOP_NAME", l->name && *l->name ? l->name : NULL);
     SetEnvironmentVariableA("AIC_SKIN", l->skin && *l->skin ? l->skin : NULL);
     SetEnvironmentVariableA("AIC_SKINS", l->skins ? "1" : NULL);

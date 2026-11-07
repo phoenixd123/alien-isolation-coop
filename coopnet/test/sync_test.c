@@ -90,7 +90,7 @@ int main(void) {
     CHECK(!cut_should_follow(1, 1, NAN, -1, 0), "bad distance: stay");
 
     /* packet */
-    CutPkt ck; float cp[3] = {1.5f, -2.f, 300.f}; proto_fill_cut(&ck, 77, cp);
+    CutPkt ck; float cp[3] = {1.5f, -2.f, 300.f}; proto_fill_cut(&ck, 77, cp, CUT_SCENE);
     CHECK(proto_check_cut(&ck, sizeof ck) && ck.id == 77 && ck.pos[2] == 300.f, "cut packet round trip");
     CutPkt cb = ck; cb.pos[0] = 9999.f; cb.check = proto_sum(&cb, offsetof(CutPkt, check));
     CHECK(!proto_check_cut(&cb, sizeof cb), "position off the map rejected");
@@ -100,6 +100,25 @@ int main(void) {
     CHECK(!proto_check_cut(&cb, sizeof cb), "checksum");
     AlienPkt ap; float apos[3] = {1, 2, 3}; proto_fill_alien(&ap, 5, apos, 1);
     CHECK(!proto_check_cut((const CutPkt *)&ap, sizeof ap) && proto_check_alien(&ap, sizeof ap), "same size as the alien packet, told apart by kind");
+
+    /* regroup (F7) and the teleport fade */
+    CHECK(regroup_ok(1, 1, 10.f) && !regroup_ok(1, 1, 1.f) && !regroup_ok(0, 1, 10.f) && !regroup_ok(1, 0, 10.f) && !regroup_ok(1, 1, NAN), "who may regroup");
+    CHECK(tp_fade(-5) == 0.f && tp_fade(0) == 0.f && fabsf(tp_fade(125) - 0.5f) < 1e-3f && tp_fade(TP_FADE_OUT_MS) == 1.f, "fade out");
+    CHECK(tp_fade(TP_FADE_OUT_MS + TP_FADE_IN_MS / 2) > 0.45f && tp_fade(TP_FADE_OUT_MS + TP_FADE_IN_MS / 2) < 0.55f && tp_fade(5000) == 0.f, "fade back in");
+    CutPkt ra; float rp[3] = {1, 2, 3}; proto_fill_cut(&ra, 9, rp, CUT_REGROUP_ASK);
+    CHECK(proto_check_cut(&ra, sizeof ra) && ra.flags == CUT_REGROUP_ASK, "regroup ask packet");
+    ra.flags = 3; ra.check = proto_sum(&ra, offsetof(CutPkt, check));
+    CHECK(!proto_check_cut(&ra, sizeof ra), "unknown teleport kind rejected");
+
+    /* build check */
+    BuildPkt bk; proto_fill_build(&bk, 0x1111, 0x2222);
+    CHECK(proto_check_build(&bk, sizeof bk), "build packet round trip");
+    CHECK(proto_build_diff(0x1111, 0x2222, &bk) == 0, "same builds");
+    CHECK(proto_build_diff(0x9999, 0x2222, &bk) == 1 && proto_build_diff(0x1111, 0x9999, &bk) == 2 && proto_build_diff(9, 9, &bk) == 3, "what differs");
+    CHECK(proto_build_diff(0, 0x2222, &bk) == 0, "unknown build: no verdict");
+    BuildPkt bb = bk; bb.mod = 5;
+    CHECK(!proto_check_build(&bb, sizeof bb), "build checksum");
+
     printf("sync_test: %d/%d checks passed\n", passes, passes + fails);
     return fails != 0;
 }
