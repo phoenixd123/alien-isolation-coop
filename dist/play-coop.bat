@@ -30,6 +30,8 @@ if /i "%1"=="steam-host" (
   if not "%3"=="" set AIC_COOP_NAME=%3
   echo Joining %2:45500
 ) else goto usage
+rem Skin (how your friend sees you): put a name like SAMUELS in skin.txt. Skins are experimental: set AIC_SKINS=1 to try them.
+if exist "%~dp0skin.txt" set /p AIC_SKIN=<"%~dp0skin.txt"
 start "" "%~dp0AI.exe"
 exit /b 0
 :usage

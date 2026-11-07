@@ -25,6 +25,8 @@
 #include "hud.h"
 #include "sfx.h"
 #include "ui.h"
+#include "skin.h"
+#include "skins.h"
 #include <stdlib.h>
 #include <dwmapi.h>
 
@@ -35,6 +37,8 @@ void probe_set_swallow(int (*cb)(uint32_t method, uint32_t eid, uint32_t type));
 void puppet_tick(int in_level, int peer_live, const float peer_cam_pos[3], void (*logf)(const char *, ...));
 
 static FILE *g_log, *g_csv;
+static int g_skins;              /* AIC_SKINS=1: partner body as a story character (skin.c) */
+static char g_my_skin[24] = "TAYLOR";   /* AIC_SKIN: how the partner sees you */
 static char g_profile[32] = "default";
 static char g_name[16] = "partner";
 static DWORD g_pid;
@@ -539,13 +543,13 @@ static void net_send(const Cam *c) {
 
 static void net_recv(void) {
     for (;;) {
-        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; uint8_t raw[128]; } u;
+        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; SkinPkt k; uint8_t raw[128]; } u;
         struct sockaddr_in from; int fl = sizeof from, n;
         if (g_steam) n = steamnet_recv(&u, sizeof u);
         else n = recvfrom(g_sock, (char *)&u, sizeof u, 0, (struct sockaddr *)&from, &fl);
         if (n <= 0) return;
         int kind = proto_check_world(&u.w, n) ? 2 : proto_check_life(&u.l, n) ? 3 : proto_check_alien(&u.a, n) ? 4 :
-                   proto_check(&u.p, n) ? 1 : 0;
+                   proto_check_skin(&u.k, n) ? 5 : proto_check(&u.p, n) ? 1 : 0;
         if (!kind) continue;
         if (!g_steam && g_learn_peer && (!g_peer_fixed || from.sin_addr.s_addr != g_peer_addr.sin_addr.s_addr || from.sin_port != g_peer_addr.sin_port)) {
             g_peer_addr = from; g_peer_fixed = 1;   /* host: talk back to the joiner (latest address wins, handles NAT rebinding) */
@@ -555,6 +559,7 @@ static void net_recv(void) {
         if (kind == 2) { on_world(&u.w); continue; }
         if (kind == 3) { on_life(&u.l); continue; }
         if (kind == 4) { on_alien(&u.a); continue; }
+        if (kind == 5) { if (g_skins) skin_set_partner(u.k.skin); continue; }
         PresencePkt k = u.p;
         EnterCriticalSection(&g_cs);
         if (!g_peer.valid || (int32_t)(k.seq - g_peer.seq) > 0) {
@@ -833,7 +838,14 @@ static DWORD WINAPI net_thread(LPVOID p) {
             EnterCriticalSection(&g_cs);
             memcpy(pp, g_peer.p, 12); live = g_peer.valid && (GetTickCount() - g_peer.t_ms) < 1500;
             LeaveCriticalSection(&g_cs);
-            puppet_tick(in_level, live, pp, logf_);
+            if (g_skins) {
+                static DWORD last_skin;
+                if (now - last_skin >= 2000) { SkinPkt k; proto_fill_skin(&k, g_my_skin); net_raw(&k, sizeof k); last_skin = now; }
+                float feet[3] = {pp[0], pp[1] - 1.65f, pp[2]};
+                skin_set_target(in_level && live && (pp[0] != 0.f || pp[2] != 0.f), feet);
+            }
+            /* a skin body replaces the borrowed-NPC body */
+            if (!g_skins || (!skin_active() && !skin_level_has_skin())) puppet_tick(in_level, live, pp, logf_);
         }
         if (g_csv && c.ok && now - last_csv >= 100) {
             fprintf(g_csv, "%lu", now);
@@ -899,6 +911,16 @@ static void init(HMODULE self) {
     logf_("coopnet up: profile=%s name=%s fwd_sign=%d couch_seat=%d alien_tag=%d pin=%d", g_profile, g_name, g_fwd_sign,
           g_couch ? g_seat : -1, g_alien_tag, g_alien_pin);
     probe_install(g_dir, g_profile, logf_);
+    {   /* skins: AIC_SKINS=1 turns them on (not tested in game yet); AIC_SKIN=<name> is how your partner sees you */
+        char sb[32];
+        if (GetEnvironmentVariableA("AIC_SKIN", sb, sizeof sb) && sb[0]) {
+            for (char *q = sb; *q; q++) if (*q >= 'a' && *q <= 'z') *q -= 32;
+            if (skin_find(sb)) lstrcpynA(g_my_skin, sb, sizeof g_my_skin); else logf_("skin: unknown skin %s, using %s", sb, g_my_skin);
+        }
+        g_skins = GetEnvironmentVariableA("AIC_SKINS", sb, sizeof sb) && sb[0] == '1';
+        if (g_skins && !skin_install(logf_)) g_skins = 0;
+        logf_("skin: %s (you are %s)", g_skins ? "on" : "off", g_my_skin);
+    }
     CloseHandle(CreateThread(NULL, 0, net_thread, NULL, 0, NULL));
     CloseHandle(CreateThread(NULL, 0, overlay_thread, NULL, 0, NULL));
 }

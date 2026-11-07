@@ -125,3 +125,26 @@ static inline int proto_check_alien(const AlienPkt *k, int len) {
     for (int i = 0; i < 3; i++) if (!(k->pos[i] == k->pos[i]) || k->pos[i] > 1e6f || k->pos[i] < -1e6f) return 0;
     return 1;
 }
+
+/* kind 5: the skin the sender wants to be seen as (skins.h). Every 2 s. */
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;
+    uint8_t  version, kind, pad[2];
+    char     skin[24];
+    uint32_t check;
+} SkinPkt;
+#pragma pack(pop)
+_Static_assert(sizeof(SkinPkt) == 36, "SkinPkt must be 36 bytes");
+static inline void proto_fill_skin(SkinPkt *k, const char *skin) {
+    memset(k, 0, sizeof *k);
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 5;
+    size_t L = strlen(skin); if (L > 23) L = 23; memcpy(k->skin, skin, L);
+    k->check = proto_sum(k, offsetof(SkinPkt, check));
+}
+static inline int proto_check_skin(const SkinPkt *k, int len) {
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 5) return 0;
+    if (k->check != proto_sum(k, offsetof(SkinPkt, check))) return 0;
+    for (int i = 0; i < 24; i++) { char c = k->skin[i]; if (!c) return i > 0; if (!(c == '_' || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) return 0; }
+    return 0;
+}
