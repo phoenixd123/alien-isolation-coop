@@ -264,8 +264,7 @@ second copy). Logs go to `coop_logs\`.
   engine addresses (spawn handler, CharacterManager update, teleport, character registry). Used under the AI-MP
   Non-Commercial Attribution License ([third_party/AIMP-LICENSE.txt](third_party/AIMP-LICENSE.txt)), so that
   part of this mod can never be sold. My changes: written in C for this mod, story characters per level instead
-  of the Nostromo crew, partner pose from this mod's network packets, teleport-follow only. Dropper7856 hasn't
-  reviewed or endorsed this mod.
+  of the Nostromo crew, partner pose from this mod's network packets, teleport-follow only. Me and Dropper7856 have collabed over this.
 - Steam interface slot order from the Steamworks headers in the
   [Goldberg emulator](https://gitlab.com/Mr_Goldberg/goldberg_emulator).
 - [Couchlink](https://github.com/cranebeaker/couchlink) for split screen on one PC.
