@@ -5,16 +5,49 @@ What I ran, on what, and what came out. Most of my in-game tests use two copies 
 
 ## Offline suite
 
-`build.ps1` runs these on every build (no game needed). Last run 2026-11-04:
+`build.ps1` runs these on every build (no game needed). Last run 2026-11-06:
 
 ```
 steamwrap ABI test:   40 passed, 0 failed
 protocol over UDP:    18 passed, 0 failed  (476/476 packets, loss and reorder simulated; world packets)
 overlay projection:   10 passed, 0 failed  (cases taken from in-game measurements)
 death rules:          31 passed, 0 failed  (spectate, both down, disconnect, give up, early load, stale packets, solo)
+skins:                38 passed, 0 failed  (spawn request matches AI-MP's layout, level names, skin choice, packet)
 motion tracker:       14 passed, 0 failed  (yaw, pitch ignored, motion window, teleports, ping rate)
 steam transport:      24 passed, 0 failed  (fake steam_api checks the MSVC argument layout both ways)
 ```
+
+## Sync rules across levels
+
+Not a game test: a check of the level files. I dumped every level's script IDs (`levelmod ids`) and looked for
+the entities each world-sync rule listens to and replays. "yes" means the archetype is in that level with the
+same IDs the mod uses, so the rule can fire there. 2026-11-06:
+
+| Level | doors | locks/cutting | pickups | keycards | tools | level change | story composites |
+|---|---|---|---|---|---|---|---|
+| BSP_LV426_PT01 | - | - | yes | yes | yes | yes | 1 |
+| BSP_LV426_PT02 | - | - | yes | yes | yes | yes | 1 |
+| BSP_TORRENS | yes | yes | yes | yes | yes | yes | 2 |
+| DLC_CHALLENGEMAP16 | yes | yes | yes | yes | yes | yes | 0 |
+| ENG_ALIEN_NEST | yes | yes | yes | yes | yes | yes | 1 |
+| ENG_REACTORCORE | yes | yes | yes | yes | yes | yes | 2 |
+| ENG_TOWPLATFORM | yes | yes | yes | yes | yes | yes | 1 |
+| HAB_AIRPORT | yes | yes | yes | yes | yes | yes | 3 |
+| HAB_CORPORATEPENT | yes | yes | yes | yes | yes | yes | 1 |
+| HAB_SHOPPINGCENTRE | yes | yes | yes | yes | yes | yes | 3 |
+| SCI_ANDROIDLAB | yes | yes | yes | yes | yes | yes | 2 |
+| SCI_HOSPITALLOWER | yes | yes | yes | yes | yes | yes | 2 |
+| SCI_HOSPITALUPPER | yes | yes | yes | yes | yes | yes | 1 |
+| SCI_HUB | yes | yes | yes | yes | yes | yes | 4 |
+| TECH_COMMS | yes | yes | yes | yes | yes | yes | 2 |
+| TECH_HUB | yes | yes | yes | yes | yes | yes | 4 |
+| TECH_MUTHRCORE | yes | yes | yes | yes | yes | yes | 1 |
+| TECH_RND | yes | yes | yes | yes | yes | yes | 1 |
+| TECH_RND_HZDLAB | yes | yes | yes | yes | yes | yes | 2 |
+| SOLACE | yes | yes | yes | yes | yes | yes | 1 |
+
+The two LV426 levels have no `Door_Package` or `Door_Mechanism` doors (the derelict uses its own), so door and lock
+sync doesn't reach them. The Survivor map has no story mission composites, as expected.
 
 ## In game
 

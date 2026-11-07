@@ -7,7 +7,7 @@
  * every story level (checked with `levelmod ids` on all levels).
  *
  *   Doors (Archetypes\Misc_Subarchetypes\Door_Package): IsOpen.set_true -> Door.request_open. Opens and
- *     auto-closes like a normal door; locked doors stay locked.
+ *     auto-closes like a normal door; a locked door stays locked until one of you unlocks it (see Locks).
  *   Pickups (Required_Assets\Pickups\pickup_common): SetPersistentIntegerValue.trigger (the item was collected)
  *     -> the same trigger (marks it taken, as a save would) and IntegerEquals_1.trigger (the check the game runs
  *     on load, which fires hide_pickup). The item disappears for the partner; they don't get a copy.
@@ -18,6 +18,13 @@
  *     scripts and Archetypes\Gameplay\BackstagePlayerDetection -> the same on the joiner. The host's alien
  *     director decides when the alien comes out, retreats into the vents or changes behaviour; the joiner's alien
  *     follows. Joiners never send these and the host never accepts them.
+ *
+ *   Locks (Archetypes\Misc_Subarchetypes\Door_Mechanism): IsLocked.set_false -> the same. Every way a door gets
+ *     unlocked ends here: hacking, keycard, keycode, lever, button. So a door one player unlocks is unlocked for both.
+ *   Cutting (Door_Mechanism): IsCuttingCompleted.set_true -> the same. A door cut open with the torch stays open.
+ *   Level change (Archetypes\Script\Mission\SwitchLevel): SwitchLevel_1.trigger -> the same. Every lift, tram and
+ *     mission exit that loads another level goes through this script, so when one player leaves the level the other
+ *     loads the same one. After a level change, more level changes are ignored for a while so it can't bounce back.
  *
  *   Story (the 35 SCRIPT_StoryMission composites): LogicOnce.trigger -> the same LogicOnce on the partner.
  *     Mission scripts gate their progress with LogicOnce nodes, which fire once by design, so replaying the
@@ -36,6 +43,11 @@
 #define SG_TRIGGER       0xd9d0ca29u
 #define SG_SET_TRUE      0x5eb0e648u
 #define SG_REQUEST_OPEN  0x8da169a3u
+#define SG_SET_FALSE     0xd2b3cc2bu
+#define T_SWITCHLEVEL    0xac1aa738u
+#define C_DOOR_MECHANISM 0x143a5b75u   /* Archetypes\Misc_Subarchetypes\Door_Mechanism */
+#define C_SWITCHLEVEL    0xef3722dcu   /* Archetypes\Script\Mission\SwitchLevel */
+#define LEVEL_COOLDOWN_MS 20000
 #define T_LOGICSWITCH    0x0e423fccu
 #define T_DOOR           0xaf6549bbu
 #define T_SETINTEGER     0x02a3673bu
@@ -70,30 +82,38 @@ static int is_alien_owner(uint32_t c) { return c == C_BACKSTAGE || is_story(c); 
 static int owner_match(uint32_t want, uint32_t c) {
     return want == OWNER_STORY ? is_story(c) : want == OWNER_ALIEN ? is_alien_owner(c) : c == want;
 }
-typedef struct { const char *name; uint32_t owner; Act when; Act apply[3]; int host_only; } Rule;
+typedef struct { const char *name; uint32_t owner; Act when; Act apply[3]; int host_only; int level; } Rule;
 
 static const Rule RULES[] = {
     { "door", 0x56d0e3beu, { SG_SET_TRUE, 0x95de1d55u, T_LOGICSWITCH },
-      { { SG_REQUEST_OPEN, 0x11c160bdu, T_DOOR } }, 0 },
+      { { SG_REQUEST_OPEN, 0x11c160bdu, T_DOOR } }, 0, 0 },
     { "pickup", 0x65c68783u, { SG_TRIGGER, 0xd74757b0u, T_SETINTEGER },
-      { { SG_TRIGGER, 0xd74757b0u, T_SETINTEGER }, { SG_TRIGGER, 0xc29ee5fdu, T_INTEGEREQUALS } }, 0 },
+      { { SG_TRIGGER, 0xd74757b0u, T_SETINTEGER }, { SG_TRIGGER, 0xc29ee5fdu, T_INTEGEREQUALS } }, 0, 0 },
     { "story", OWNER_STORY, { SG_TRIGGER, 0, T_LOGICONCE },
-      { { SG_TRIGGER, 0, T_LOGICONCE } }, 0 },
+      { { SG_TRIGGER, 0, T_LOGICONCE } }, 0, 0 },
     { "keycard", 0xf9f99532u, { SG_TRIGGER, 0x9107fd88u, T_SETKEYCARD },
-      { { SG_TRIGGER, 0x9107fd88u, T_SETKEYCARD } }, 0 },
+      { { SG_TRIGGER, 0x9107fd88u, T_SETKEYCARD } }, 0, 0 },
     { "tool", 0x3c207e36u, { SG_TRIGGER, 0x85436974u, T_SETGATINGTOOL },
-      { { SG_TRIGGER, 0x85436974u, T_SETGATINGTOOL } }, 0 },
+      { { SG_TRIGGER, 0x85436974u, T_SETGATINGTOOL } }, 0, 0 },
     { "alien-withdraw", OWNER_ALIEN, { SG_TRIGGER, 0, T_WITHDRAWALIEN },
-      { { SG_TRIGGER, 0, T_WITHDRAWALIEN } }, 1 },
+      { { SG_TRIGGER, 0, T_WITHDRAWALIEN } }, 1, 0 },
     { "alien-config", OWNER_ALIEN, { SG_TRIGGER, 0, T_ALIENCONFIG },
-      { { SG_TRIGGER, 0, T_ALIENCONFIG } }, 1 },
+      { { SG_TRIGGER, 0, T_ALIENCONFIG } }, 1, 0 },
     { "alien-stage", OWNER_STORY, { SG_TRIGGER, 0, T_ALIENSTAGE },
-      { { SG_TRIGGER, 0, T_ALIENSTAGE } }, 1 },
+      { { SG_TRIGGER, 0, T_ALIENSTAGE } }, 1, 0 },
+    { "unlock", C_DOOR_MECHANISM, { SG_SET_FALSE, 0x09de34aeu, T_LOGICSWITCH },
+      { { SG_SET_FALSE, 0x09de34aeu, T_LOGICSWITCH } }, 0, 0 },
+    { "cut", C_DOOR_MECHANISM, { SG_SET_TRUE, 0x26dbce33u, T_LOGICSWITCH },
+      { { SG_SET_TRUE, 0x26dbce33u, T_LOGICSWITCH } }, 0, 0 },
+    { "level", C_SWITCHLEVEL, { SG_TRIGGER, 0x92d9160au, T_SWITCHLEVEL },
+      { { SG_TRIGGER, 0x92d9160au, T_SWITCHLEVEL } }, 0, 1 },
 };
 #define NRULES (int)(sizeof RULES / sizeof RULES[0])
 
 static void (*g_logf)(const char *, ...);
 static int g_on, g_host;
+static volatile LONG g_level_t;   /* tick of the last level change sent or applied (0: none) */
+static int level_cooling(void) { LONG t = g_level_t; return t && (DWORD)(GetTickCount() - (DWORD)t) < LEVEL_COOLDOWN_MS; }
 void ws_set_host(int host) { g_host = host; }
 
 #define NOUT 256
@@ -137,7 +157,7 @@ void ws_init(void (*logf)(const char *, ...)) {
     g_logf = logf;
     InitializeCriticalSection(&g_cs);
     g_on = 1;
-    logf("worldsync: %d rules (doors, pickups, keycards, tools, alien director [host], story LogicOnce in %d mission composites)",
+    logf("worldsync: %d rules (doors, locks, cutting, pickups, keycards, tools, level changes, alien director [host], story LogicOnce in %d mission composites)",
          NRULES, (int)(sizeof STORY / sizeof STORY[0]));
 }
 
@@ -175,6 +195,7 @@ void ws_on_call(const uint32_t *msg, const uint32_t *target) {
         ev.npath = read_path((uint32_t)(uintptr_t)target, ev.path, &owner);
         if (ev.npath == 0 || !owner_match(R->owner, owner)) continue;   /* another rule may share the trigger */
         if (echo_recent(path_hash(ev.path, ev.npath))) return;
+        if (R->level) { if (level_cooling()) return; InterlockedExchange(&g_level_t, (LONG)(GetTickCount() | 1)); }
         for (int a = 0; a < 3 && R->apply[a].method; a++) {
             ev.method = R->apply[a].method; ev.eid = R->apply[a].eid ? R->apply[a].eid : eid; ev.type = R->apply[a].type;
             push(&ev);
@@ -192,17 +213,22 @@ int ws_pop(WorldEvt *ev) {
 
 void ws_apply(const WorldEvt *ev) {
     if (!g_on) return;
-    int ok = 0; uint32_t owner = 0;
+    int ok = 0, level = 0; uint32_t owner = 0;
     for (int r = 0; r < NRULES && !ok; r++) {
         if (RULES[r].host_only && g_host) continue;   /* the host's alien is the real one */
         for (int a = 0; a < 3 && RULES[r].apply[a].method; a++) {
             const Act *A = &RULES[r].apply[a];
             if (A->method == ev->method && (A->eid ? A->eid == ev->eid : ev->eid != 0) && A->type == ev->type) {
-                ok = 1; owner = RULES[r].owner; break;
+                ok = 1; owner = RULES[r].owner; level = RULES[r].level; break;
             }
         }
     }
     if (!ok) { g_logf("worldsync: ignored an event that matches no rule (%08x on %08x)", ev->method, ev->eid); return; }
+    if (level) {
+        if (level_cooling()) { g_logf("worldsync: level change ignored (one just happened)"); return; }
+        InterlockedExchange(&g_level_t, (LONG)(GetTickCount() | 1));
+        g_logf("worldsync: partner is changing level, following");
+    }
     ReplayKey k; memset(&k, 0, sizeof k);
     k.method = ev->method; k.eid = ev->eid; k.type = ev->type; k.npath = ev->npath;
     memcpy(k.path, ev->path, (size_t)ev->npath * 4);

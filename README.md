@@ -34,6 +34,8 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Partner body: an NPC that walks where your partner walks, so the alien can see them | airport level only so far |
 | Skins: your partner shows up as a story character you pick (Taylor, Samuels, Axel...) | written and tested offline, not tried in game yet; off unless `AIC_SKINS=1` |
 | Keycards and tools shared | written, not tried in a level yet |
+| Locked doors: one of you unlocks it (hack, keycard, code, lever, button) or cuts it open, it's open for both | written, not tried in a level yet |
+| Level changes: when one of you takes a lift, tram or exit to another level, the other loads it too | written, not tried in a level yet |
 | Host's alien director drives the joiner's alien (vents, behaviour, stage) | written, not tried in a level yet |
 | One alien in the same place for both players | not done |
 | New overlay: motion tracker, partner marker, death screens | tracker and marker checked in a level (airport, two copies on one PC); death screens only checked in rendered previews so far |
@@ -113,8 +115,10 @@ changed, none failed. TECH_COMMS is skipped because CathodeLib can't read all of
 - The partner marker is an overlay, so you can see it through walls. The 3D body only exists in the airport
   level for now.
 - Each game still has its own alien. They follow the same director decisions but hunt on their own between them.
-- Hacking, lifts, cutscenes and anything else a mission does outside doors, items, keycards and story steps
-  isn't synced, so long sessions can drift. Start from the same save.
+- Cutscenes, terminals, rewiring, lift rides inside a level and anything else a mission does outside doors,
+  locks, items, keycards, story steps and level changes isn't synced, so long sessions can drift. Start from the
+  same save.
+- A level change you follow skips the save the game normally makes right before it.
 - Only deaths that go through the game's normal death script are caught. If one slips through you just get
   the regular game-over menu (look for `life: player died` in the log).
 - Spectating updates 20 times a second, so fast turns look a bit stepped. You don't see your partner's HUD.
@@ -140,6 +144,9 @@ lets two copies run side by side (`AIC_PROFILE`), and loads `coopnet.dll`.
   | You do this | Your partner's game does this |
   |---|---|
   | a `Door_Package` sets `IsOpen` | `request_open` on the same door (locked doors stay locked) |
+  | a `Door_Mechanism` sets `IsLocked` false (hack, keycard, code, lever, button) | the same, so the door is unlocked |
+  | a `Door_Mechanism` sets `IsCuttingCompleted` | the same, so the cut door stays open |
+  | the `SwitchLevel` script loads another level | the same `SwitchLevel`, so they load that level too |
   | a pickup sets its "collected" value | the load-time "already taken" path, which hides the item |
   | a `LogicOnce` in one of the 35 story mission composites fires | the same `LogicOnce`, and their mission script carries on |
   | `SetPlayerHasKeycard` / `SetPlayerHasGatingTool` | the same, so they get the card or tool |
@@ -185,7 +192,7 @@ second copy). Logs go to `coop_logs\`.
 4. Two PCs, two Steam accounts.
 5. Run the recipe inside Couchlink.
 6. Lobbies and invites ([docs/online.md](docs/online.md)).
-7. More world sync: hacking, lifts, terminals, cutscenes.
+7. More world sync: terminals, rewiring, cutscenes.
 
 ## Credits
 
