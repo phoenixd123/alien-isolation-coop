@@ -137,6 +137,34 @@ LV426 levels use their own doors, so the door-opening rule doesn't reach them.
 **Only these actions are accepted from the network**, so a partner (or anyone else) can't make your game run
 arbitrary script.
 
+## Cutscenes: you watch them together
+
+When a cutscene starts in your game, your partner is moved to you at that moment, so you both watch it and carry on
+from the same place. Their screen shows *CUTSCENE: JOINING &lt;your name&gt;* for a few seconds.
+
+- **What counts as a cutscene** comes from the level files again: anything starting inside one of the game's 14
+  cutscene scripts (where all of its cutscene camera animations are), and the 11 moments where a story mission
+  takes over your camera. Camera moves that belong to one player (hacking, hiding) don't count.
+- **Where they land:** a spot you walked through a moment ago, about a metre behind you. A player fits there,
+  it's not inside a wall, and it's not inside your body.
+- **When they don't move:** if they're already within 3 m of you, dead and spectating, or not in a level.
+- **If you both start one at once,** the joiner goes to the host.
+- **Who started it:** only the game where the cutscene began sends the request. When the same cutscene then starts
+  in your partner's game because the story step was shared, that one doesn't pull you back.
+- The move uses the game's own character teleport, on the game's own thread, and only after checking that this
+  build of the game has it where the mod expects. `AIC_CUTSCENE_TP=0` turns this off.
+
+```mermaid
+sequenceDiagram
+    participant A as Your game
+    participant B as Partner's game
+    A->>A: a cutscene starts (you walked into it)
+    A->>B: "cutscene: come here", with a spot 1 m behind you
+    B->>B: more than 3 m away and alive? teleport there
+    B->>B: the shared story step starts the same cutscene
+    Note over A,B: you both watch it from the same place
+```
+
 ## The alien
 
 - **One director.** The host's game decides when the alien comes out of the vents, when it retreats and how
@@ -206,9 +234,10 @@ they're drawn with, into every level. It backs up the originals first; uninstall
 
 ## What it doesn't do (yet)
 
+- The cutscene move is a teleport: the screen just cuts to the new place, there's no fade yet.
 - Things that can happen again and again (riding a lift inside a level, using a terminal twice) aren't shared;
   only saved state and once-only steps are. Start from the same save.
 - Your partner's body walks by being moved, not by playing walking animations.
 - The joiner's alien follows the host's alien's position exactly, but faces and animates on its own.
-- The newest parts (automatic world sync, skins in game, the shared alien, lock and level-change sync, starting
+- The newest parts (cutscene teleport, automatic world sync, skins in game, the shared alien, lock and level-change sync, starting
   from the lobby) haven't been run in the game yet. [testing.md](testing.md) lists what has.

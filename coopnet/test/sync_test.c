@@ -3,6 +3,8 @@
 #include <math.h>
 #include "../syncmap.h"
 #include "../alien_interp.h"
+#include "../cutscene.h"
+#include "../proto.h"
 
 static int fails, passes;
 #define CHECK(c, m) do { if (c) passes++; else { fails++; printf("FAIL: %s\n", m); } } while (0)
@@ -58,6 +60,46 @@ int main(void) {
     alien_track_push(&w, 0xFFFFFFF0u, p0); alien_track_push(&w, 0x00000010u, p2);
     CHECK(alien_track_at(&w, 0, o) && fabsf(o[0] - 1.f) < 1e-3f, "across the 49-day tick wrap");
 
+    /* cutscene tables */
+    CHECK(CUT_COMP_N == 14 && STORY_CAM_N == 11, "14 cutscene composites, 11 story cameras");
+    CHECK(cut_is_comp(0x5c929e95u) && !cut_is_comp(0x143a5b75u), "cutscene_22 is a cutscene, Door_Mechanism isn't");
+    CHECK(cut_is_story_cam(STORY_CAM[0][0], STORY_CAM[0][1]) && !cut_is_story_cam(STORY_CAM[0][0], 1), "story camera lookup");
+
+    /* landing spot: a point walked through about a metre back */
+    CutTrail tr; memset(&tr, 0, sizeof tr); float s3[3];
+    CHECK(!cut_safe_spot(&tr, 0, s3), "no trail, no spot");
+    for (int i = 0; i <= 30; i++) { float q[3] = {i * 0.1f, 2.f, 0.f}; cut_trail_push(&tr, 1000u + (uint32_t)i * 33u, q); }
+    uint32_t tnow = 1000u + 30u * 33u;
+    CHECK(cut_safe_spot(&tr, tnow, s3) && fabsf(s3[0] - 2.0f) < 0.051f && s3[1] == 2.f, "spot 1 m behind on the path");
+    CutTrail st; memset(&st, 0, sizeof st);
+    for (int i = 0; i < 10; i++) { float q[3] = {5.f, 0.f, 5.f}; cut_trail_push(&st, 100u + (uint32_t)i * 33u, q); }
+    CHECK(cut_safe_spot(&st, 500, s3) && near3(s3, 5, 0, 5), "standing still: their own spot");
+    CutTrail old; memset(&old, 0, sizeof old);
+    { float q0[3] = {0, 0, 0}, q1[3] = {3, 0, 0}; cut_trail_push(&old, 100, q0); cut_trail_push(&old, 9000, q1); }
+    CHECK(cut_safe_spot(&old, 9000, s3) && near3(s3, 3, 0, 0), "too old a point isn't used");
+    for (int i = 0; i < 200; i++) { float q[3] = {(float)i, 0, 0}; cut_trail_push(&tr, 5000u + (uint32_t)i * 33u, q); }
+    CHECK(tr.n == CUT_TRAIL && cut_safe_spot(&tr, 5000u + 199u * 33u, s3) && near3(s3, 198, 0, 0), "trail wraps");
+
+    /* who moves */
+    CHECK(cut_should_follow(1, 1, 20.f, -1, 0) && cut_should_follow(1, 1, 20.f, -1, 1), "far away: move");
+    CHECK(!cut_should_follow(1, 1, 2.f, -1, 0), "already close: stay");
+    CHECK(!cut_should_follow(0, 1, 20.f, -1, 0), "dead (spectating): stay");
+    CHECK(!cut_should_follow(1, 0, 20.f, -1, 0), "not in a level: stay");
+    CHECK(cut_should_follow(1, 1, 20.f, 500, 0) && !cut_should_follow(1, 1, 20.f, 500, 1), "both started one: the joiner goes to the host");
+    CHECK(cut_should_follow(1, 1, 20.f, 5000, 1), "mine was long ago: move");
+    CHECK(!cut_should_follow(1, 1, NAN, -1, 0), "bad distance: stay");
+
+    /* packet */
+    CutPkt ck; float cp[3] = {1.5f, -2.f, 300.f}; proto_fill_cut(&ck, 77, cp);
+    CHECK(proto_check_cut(&ck, sizeof ck) && ck.id == 77 && ck.pos[2] == 300.f, "cut packet round trip");
+    CutPkt cb = ck; cb.pos[0] = 9999.f; cb.check = proto_sum(&cb, offsetof(CutPkt, check));
+    CHECK(!proto_check_cut(&cb, sizeof cb), "position off the map rejected");
+    cb = ck; cb.id = 0; cb.check = proto_sum(&cb, offsetof(CutPkt, check));
+    CHECK(!proto_check_cut(&cb, sizeof cb), "id 0 rejected");
+    cb = ck; cb.pos[1] = 1.f;
+    CHECK(!proto_check_cut(&cb, sizeof cb), "checksum");
+    AlienPkt ap; float apos[3] = {1, 2, 3}; proto_fill_alien(&ap, 5, apos, 1);
+    CHECK(!proto_check_cut((const CutPkt *)&ap, sizeof ap) && proto_check_alien(&ap, sizeof ap), "same size as the alien packet, told apart by kind");
     printf("sync_test: %d/%d checks passed\n", passes, passes + fails);
     return fails != 0;
 }

@@ -28,6 +28,7 @@
 #include "skin.h"
 #include "skins.h"
 #include "version.h"
+#include "cutscene.h"
 #include <stdlib.h>
 #include <dwmapi.h>
 
@@ -98,6 +99,12 @@ static float g_dead_pos[3]; static int g_dead_pos_ok, g_qa_dead;
 static volatile LONG g_life_dirty;
 static uint32_t g_peer_pid; static int g_peer_couch;
 static DWORD g_flash_t, g_both_t;      /* partner-died flash, "both down" banner */
+/* cutscene teleport (cutscene.h): AIC_CUTSCENE_TP=0 turns it off */
+static int g_cut_on = 1;
+static CutTrail g_trail;                 /* our recent positions (g_cs) */
+static volatile LONG g_cut_local;       /* a cutscene started here; the net thread sends */
+static DWORD g_cut_sent_t, g_cut_recv_t, g_ui_cut_t; static uint32_t g_cut_seen_id;
+static float g_tp_pos[3]; static volatile LONG g_tp_pending;
 static int g_spec_test;                /* AIC_SPECTATE_TEST=1: show the spectate view without dying (QA) */
 static DWORD g_life_test_ms, g_t0;     /* AIC_LIFE_TEST=<s>: run the death rules <s> seconds after start (QA) */
 
@@ -358,7 +365,18 @@ static void follow_write(void) {
 }
 static void menu_tick(void);
 static void menu_fallback(void);
-static void game_tick_cb(void) { follow_write(); menu_tick(); }
+static void cut_teleport_tick(void) {   /* game thread */
+    if (!g_tp_pending) return;
+    InterlockedExchange(&g_tp_pending, 0);
+    Cam me; read_cam(&me);
+    float pos[3]; EnterCriticalSection(&g_cs); memcpy(pos, g_tp_pos, 12); LeaveCriticalSection(&g_cs);
+    int r = me.ok ? skin_teleport_player(pos, me.p) : 0;
+    logf_("cutscene: %s (%.1f %.1f %.1f)", r == 1 ? "moved to the partner" : r < 0 ? "can't move the player on this build" : "player not found, not moved",
+          pos[0], pos[1], pos[2]);
+    if (r == 1) g_ui_cut_t = GetTickCount();
+}
+static void game_tick_cb(void) { follow_write(); menu_tick(); cut_teleport_tick(); }
+static void on_cutscene(void) { if (g_cut_on) InterlockedExchange(&g_cut_local, 1); }   /* game thread */
 static DWORD WINAPI follow_thread(LPVOID p) {
     (void)p;
     timeBeginPeriod(1);
@@ -479,6 +497,7 @@ static void read_chars(void) {
         hud_motion_update(&g_track[k], r, now);
         memcpy(g_track_pos[k], r, 12); g_track_tag[k] = tag;
         LeaveCriticalSection(&g_cs);
+        if (tag == 0) { EnterCriticalSection(&g_cs); cut_trail_push(&g_trail, now, r); LeaveCriticalSection(&g_cs); }
         if (!found && (int)tag == g_alien_tag) { found = 1; memcpy(ap, r, 12); }
         if (found == 1 && (int)tag == g_alien_tag && g_alien_pin && !g_is_host) {
             EnterCriticalSection(&g_cs);
@@ -506,6 +525,29 @@ static void on_alien(const AlienPkt *k) {
         if (g_share_alien && !g_is_host) skin_set_alien(k->flags & 1, k->pos);
     }
     LeaveCriticalSection(&g_cs);
+}
+
+/* Partner's cutscene started: move there now (cutscene.h decides; the teleport runs on the game thread). */
+static void on_cut(const CutPkt *k) {
+    if (!g_cut_on || k->id == g_cut_seen_id) return;
+    g_cut_seen_id = k->id;
+    DWORD now = GetTickCount();
+    float me[3]; int have; Life L;
+    EnterCriticalSection(&g_cs);
+    have = g_trail.n > 0; if (have) memcpy(me, g_trail.p[(g_trail.head + CUT_TRAIL - 1) % CUT_TRAIL], 12);
+    L = g_life;
+    LeaveCriticalSection(&g_cs);
+    float dx = have ? k->pos[0] - me[0] : 1e9f, dy = have ? k->pos[1] - me[1] : 0, dz = have ? k->pos[2] - me[2] : 0;
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    int32_t since = g_cut_sent_t ? (int32_t)(now - g_cut_sent_t) : -1;
+    if (!cut_should_follow(L.state == LIFE_ALIVE, have, dist, since, g_is_host)) {
+        logf_("cutscene: partner's cutscene started, staying (%.1f m away, alive %d, mine %ld ms ago)", dist, L.state == LIFE_ALIVE, (long)since);
+        return;
+    }
+    EnterCriticalSection(&g_cs); memcpy(g_tp_pos, k->pos, 12); LeaveCriticalSection(&g_cs);
+    g_cut_recv_t = now;
+    InterlockedExchange(&g_tp_pending, 1);
+    logf_("cutscene: partner's cutscene started, moving there (%.1f m)", dist);
 }
 
 /* Tracker sounds: ping for the nearest moving contact, heartbeat when one is within 6 m or while spectating. */
@@ -546,13 +588,13 @@ static void net_send(const Cam *c) {
 
 static void net_recv(void) {
     for (;;) {
-        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; SkinPkt k; uint8_t raw[128]; } u;
+        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; SkinPkt k; CutPkt c; uint8_t raw[128]; } u;
         struct sockaddr_in from; int fl = sizeof from, n;
         if (g_steam) n = steamnet_recv(&u, sizeof u);
         else n = recvfrom(g_sock, (char *)&u, sizeof u, 0, (struct sockaddr *)&from, &fl);
         if (n <= 0) return;
         int kind = proto_check_world(&u.w, n) ? 2 : proto_check_life(&u.l, n) ? 3 : proto_check_alien(&u.a, n) ? 4 :
-                   proto_check_skin(&u.k, n) ? 5 : proto_check(&u.p, n) ? 1 : 0;
+                   proto_check_skin(&u.k, n) ? 5 : proto_check_cut(&u.c, n) ? 6 : proto_check(&u.p, n) ? 1 : 0;
         if (!kind) continue;
         if (!g_steam && g_learn_peer && (!g_peer_fixed || from.sin_addr.s_addr != g_peer_addr.sin_addr.s_addr || from.sin_port != g_peer_addr.sin_port)) {
             g_peer_addr = from; g_peer_fixed = 1;   /* host: talk back to the joiner (latest address wins, handles NAT rebinding) */
@@ -563,6 +605,7 @@ static void net_recv(void) {
         if (kind == 3) { on_life(&u.l); continue; }
         if (kind == 4) { on_alien(&u.a); continue; }
         if (kind == 5) { if (g_skins) skin_set_partner(u.k.skin); continue; }
+        if (kind == 6) { on_cut(&u.c); continue; }
         PresencePkt k = u.p;
         EnterCriticalSection(&g_cs);
         if (!g_peer.valid || (int32_t)(k.seq - g_peer.seq) > 0) {
@@ -616,7 +659,7 @@ static void build_frame(UiFrame *u, int W, int H) {
     u->spect = L.state == LIFE_DEAD || g_spec_test;
     u->follow_on = g_follow_on; u->thumb_ok = g_thumb_ok;
     u->peer_dead = L.peer_state == LIFE_DEAD && life_peer_live(&L, now);
-    u->flash_t = flash; u->both_t = both; u->give_up = g_f9_prog;
+    u->flash_t = flash; u->both_t = both; u->give_up = g_f9_prog; u->cut_t = g_ui_cut_t;
     u->steam = g_steam; u->steam_id = g_steam ? steamnet_self() : 0;
     if (live && pe.p[0] == 0.f && pe.p[1] == 0.f && pe.p[2] == 0.f) live = 0;   /* menu camera: not in a level */
     u->peer_live = live;
@@ -833,6 +876,17 @@ static DWORD WINAPI net_thread(LPVOID p) {
             static DWORD last_chars;
             int in_lvl = c.ok && (c.p[0] != 0.f || c.p[1] != 0.f || c.p[2] != 0.f);
             if (in_lvl && now - last_chars >= 33) { read_chars(); last_chars = now; }   /* 30 Hz: the alien position drives the joiner's alien */
+            if (g_cut_local) {   /* a cutscene started here: bring the partner (not if we were just moved to theirs) */
+                InterlockedExchange(&g_cut_local, 0);
+                float spot[3]; int have;
+                EnterCriticalSection(&g_cs); have = cut_safe_spot(&g_trail, now, spot); LeaveCriticalSection(&g_cs);
+                if (in_lvl && have && (!g_cut_recv_t || now - g_cut_recv_t > 5000)) {
+                    CutPkt k; proto_fill_cut(&k, (uint32_t)now ^ (g_pid << 16) ^ 0x5EEDu, spot);
+                    for (int i = 0; i < 3; i++) net_raw(&k, sizeof k);
+                    g_cut_sent_t = now;
+                    logf_("cutscene: started here, asking the partner to come (%.1f %.1f %.1f)", spot[0], spot[1], spot[2]);
+                }
+            }
             tracker_sound(in_lvl, g_couch || (g_game && GetForegroundWindow() == g_game));
         }
         {
@@ -907,6 +961,8 @@ static void init(HMODULE self) {
     if (GetEnvironmentVariableA("AIC_SPECTATE_CAM", b, sizeof b) && b[0] == '0') g_follow_mode = 0;
     g_nofade = !(GetEnvironmentVariableA("AIC_DEATH_NOFADE", b, sizeof b) && b[0] == '0');   /* no fade to black while spectating */
     g_hold_menu = !(GetEnvironmentVariableA("AIC_HOLD_MENU", b, sizeof b) && b[0] == '0');
+    g_cut_on = !(GetEnvironmentVariableA("AIC_CUTSCENE_TP", b, sizeof b) && b[0] == '0');
+    ws_set_cutscene_cb(on_cutscene);
     probe_set_tick_cb(game_tick_cb);
     probe_set_swallow(swallow_cb);
     hook_gameover_ui();

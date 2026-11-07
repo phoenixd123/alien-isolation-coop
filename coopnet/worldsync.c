@@ -39,6 +39,11 @@
  *            completions): trigger -> the same. It fires at most once on each side.
  *   Player-owned composites (thrown items, weapons, cameras, NPC brains, UI, hiding) are left out by the generator.
  *
+ * Cutscenes: a start message to anything inside a cutscene composite (CAGEAnimation start / start_cutscene,
+ *   CMD_PlayAnimation apply_start, CameraResource activate_camera, RTT_MoviePlayer trigger), start_cutscene
+ *   anywhere, or a story mission's StealCamera start, calls the cutscene callback (coopnet teleports the partner).
+ *   Not while replaying the partner's event: then they started it and they send the teleport.
+ *
  * Only methods that appear as an `apply` here, or entities in syncmap.h, are accepted from the network.
  * Echo guard: an entity changed by a remote event is not reported back for a few seconds.
  */
@@ -59,6 +64,16 @@
 #define LEVEL_COOLDOWN_MS 20000
 #define T_LOGICSWITCH    0x0e423fccu
 #define T_VARBOOL        0x0e1cb504u
+#define T_CAGEANIM       0x790007bcu
+#define T_PLAYANIM       0xcd561e51u
+#define T_CAMRESOURCE    0x4bf22afbu
+#define T_MOVIE          0x1826b14au
+#define T_STEALCAM       0x045d35d0u
+#define SG_START         0x830c2104u
+#define SG_START_CUT     0x2f49299du
+#define SG_APPLY_START   0x40f9cc50u
+#define SG_ACTIVATE_CAM  0xa4959e70u
+#define CUT_GAP_MS       10000
 #define T_DOOR           0xaf6549bbu
 #define T_SETINTEGER     0x02a3673bu
 #define T_INTEGEREQUALS  0xd2590676u
@@ -155,6 +170,10 @@ static int generic_kind(uint32_t m, uint32_t type) {
 }
 static int generic_owner_ok(uint32_t owner, uint32_t eid) { return syncmap_kind(owner, eid) != 0; }
 
+static void (*g_cut_cb)(void);
+static DWORD g_cut_t;
+void ws_set_cutscene_cb(void (*cb)(void)) { g_cut_cb = cb; }
+
 /* ONCE events already sent recently (a LogicOnce keeps receiving trigger after it has fired). */
 typedef struct { uint32_t k; DWORD t; } Sent;
 static Sent g_sent[256]; static int g_sent_i;
@@ -213,10 +232,28 @@ static void push(const WorldEvt *ev) {
     InterlockedIncrement(&g_out_w);
 }
 
+static int read_path(uint32_t ent, uint32_t *path, uint32_t *owner_type);
+static void cut_check(uint32_t m, uint32_t eid, uint32_t type, const uint32_t *target) {
+    int cand = (type == T_CAGEANIM && (m == SG_START || m == SG_START_CUT)) || (type == T_PLAYANIM && m == SG_APPLY_START) ||
+               (type == T_CAMRESOURCE && m == SG_ACTIVATE_CAM) || (type == T_MOVIE && m == SG_TRIGGER) || (type == T_STEALCAM && m == SG_START);
+    if (!cand || !g_cut_cb || replay_active()) return;
+    DWORD now = GetTickCount();
+    if (g_cut_t && now - g_cut_t < CUT_GAP_MS) return;   /* one per scene */
+    uint32_t path[6], owner = 0;
+    if (!read_path((uint32_t)(uintptr_t)target, path, &owner)) return;
+    int hit = (type == T_CAGEANIM && m == SG_START_CUT) || (type == T_STEALCAM ? cut_is_story_cam(owner, eid) : cut_is_comp(owner));
+    if (!hit) return;
+    g_cut_t = now | 1;
+    if (g_logf) g_logf("worldsync: cutscene started here (%08x on %08x in %08x)", m, eid, owner);
+    g_cut_cb();
+}
+
 void ws_on_call(const uint32_t *msg, const uint32_t *target) {
     /* Hot path: the engine is about to use both pointers, so they are valid here. */
-    if (!g_on || !msg || !target) return;
+    if (!msg || !target) return;
     uint32_t m = msg[0], eid = target[3], type = target[4];
+    cut_check(m, eid, type, target);
+    if (!g_on) return;
     for (int r = 0; r < NRULES; r++) {
         const Rule *R = &RULES[r];
         if (m != R->when.method || (R->when.eid && eid != R->when.eid) || type != R->when.type) continue;

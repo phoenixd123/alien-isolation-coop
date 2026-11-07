@@ -37,6 +37,7 @@ typedef struct {
     uint32_t flash_t, both_t;     /* partner just died / both down (ms, same clock as now; 0 = never) */
     float peer_p[3], peer_f[2];   /* bio-monitor */
     int alien_ok; float alien_p[3];
+    uint32_t cut_t;               /* moved to the partner for a cutscene (same clock as now; 0 = never) */
 } UiFrame;
 
 int ui_init(void);                                             /* GDI+ startup; 0 on failure */

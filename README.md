@@ -38,6 +38,7 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Skins: your partner shows up as a story character you pick (Taylor, Samuels, Axel...) | written and tested offline, not tried in game yet; off unless `AIC_SKINS=1` |
 | Keycards and tools shared | written, not tried in a level yet |
 | Locked doors: one of you unlocks it (hack, keycard, code, lever, button) or cuts it open, it's open for both | written, not tried in a level yet |
+| Cutscenes: when one starts in your game, your partner is moved to you right away, so you watch it together | written and tested offline, not tried in a level yet; on by default (`AIC_CUTSCENE_TP=0` turns it off) |
 | Automatic world sync: every saved world state and every one-time scripted step, in every level, with no per-object rules (1,394 objects found in the level files) | written and tested offline, not tried in a level yet |
 | Level changes: when one of you takes a lift, tram or exit to another level, the other loads it too | written, not tried in a level yet |
 | Host's alien director drives the joiner's alien (vents, behaviour, stage) | written, not tried in a level yet |
@@ -209,7 +210,7 @@ lets two copies run side by side (`AIC_PROFILE`), and loads `coopnet.dll`.
 
 Settings are environment variables: `AIC_COOP_MODE` (`host`, `join`, `steam-host`, `steam-join`),
 `AIC_COOP_PEER`, `AIC_COOP_PEER_STEAM`, `AIC_COOP_PORT`, `AIC_COOP_NAME`, `AIC_PROFILE`, `AIC_COUCH_SEAT`,
-`AIC_SEED_SAVES`, `AIC_SFX`, `AIC_SYNC`, `AIC_SPECTATE_CAM`, `AIC_HOLD_MENU`, `AIC_DEATH_NOFADE`, and the
+`AIC_SEED_SAVES`, `AIC_SFX`, `AIC_SYNC`, `AIC_CUTSCENE_TP`, `AIC_SKINS`, `AIC_SKIN`, `AIC_SHARED_ALIEN`, `AIC_SPECTATE_CAM`, `AIC_HOLD_MENU`, `AIC_DEATH_NOFADE`, and the
 experimental `AIC_ALIEN_TAG` / `AIC_ALIEN_PIN`. For testing: `AIC_SPECTATE_TEST=1`, `AIC_LIFE_TEST=<seconds>`.
 
 ## Building

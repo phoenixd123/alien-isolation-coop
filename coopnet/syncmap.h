@@ -302,6 +302,17 @@ static const uint8_t SYNCMAP_KIND[SYNCMAP_N] = {
     2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,2,1,2,2,2,2,2,2,2,2,
 };
 
+/* Cutscene composites (14) and story-mission StealCamera entities (11). */
+#define CUT_COMP_N 14
+static const uint32_t CUT_COMP[CUT_COMP_N] = {0x3535b497u,0x3a181ef8u,0x4b0c6424u,0x5c929e95u,0x5e5b500fu,0x7112366cu,0x71d12730u,0x7290e106u,0x7300a58bu,0x87d1652au,0x9a30b873u,0xabf5f786u,0xb41ca40fu,0xc06f5a2fu};
+#define STORY_CAM_N 11
+static const uint32_t STORY_CAM[STORY_CAM_N][2] = {{0x054b0197u,0x2f530cf9u},{0x054b0197u,0x9b7d006eu},{0x054b0197u,0xb74c33ebu},{0x1ae88077u,0xd0ea37c0u},{0x79a53d9cu,0x3d45b213u},{0xabc4eb1du,0x93d36b18u},{0xb4d89c0du,0xf79d64bbu},{0xee20b383u,0x8599731bu},{0xee20b383u,0xe2d4dcd1u},{0xee20b383u,0xe748772du},{0xf4f69debu,0x11583da6u}};
+static inline int cut_is_comp(uint32_t c) { for (int i = 0; i < CUT_COMP_N; i++) if (CUT_COMP[i] == c) return 1; return 0; }
+static inline int cut_is_story_cam(uint32_t c, uint32_t e) {
+    for (int i = 0; i < STORY_CAM_N; i++) if (STORY_CAM[i][0] == c && STORY_CAM[i][1] == e) return 1;
+    return 0;
+}
+
 /* Kind of (composite, entity), 0 if not shared. */
 static inline int syncmap_kind(uint32_t comp, uint32_t eid) {
     int lo = 0, hi = SYNCMAP_N - 1;

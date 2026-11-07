@@ -287,6 +287,32 @@ void skin_set_target(int ok, const float feet[3]) {
     InterlockedExchange(&g_target_ok, ok);
 }
 int skin_active(void) { return g_active != 0; }
+
+/* Teleport the local player (cutscene.h), on the game thread. The player is the active registry entry with tag 0
+   that is near the camera (`cam`), so a stray entry can't be moved by mistake. Needs no hooks: only the
+   TeleportCharacter address, checked against its bytes first. */
+int skin_teleport_player(const float pos[3], const float cam[3]) {
+    static int checked, ok;
+    if (!checked) {
+        checked = 1;
+        if (!g_base) g_base = (uintptr_t)GetModuleHandleW(NULL);
+        static const uint8_t sig_tp[16] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0, 0x83, 0xEC, 0x44, 0x53, 0x56, 0x8B, 0xF1, 0x8B, 0x0E, 0x57};
+        ok = bytes_ok(g_base + RVA_TELEPORT, sig_tp, 16);
+        if (ok && !g_tp) g_tp = (tp_fn)(g_base + RVA_TELEPORT);
+    }
+    if (!ok || !g_tp) return -1;
+    for (int i = 0; i < REG_COUNT; i++) {
+        uint32_t tag = 1; float cur[3];
+        if (i == g_bound_slot || !reg_chr(i, 1)) continue;
+        if (!rd(reg_entry(i) + 0x8C, &tag, 4) || tag != 0 || !rd(reg_entry(i) + 0x80, cur, 12)) continue;
+        float dx = cur[0] - cam[0], dz = cur[2] - cam[2];
+        if (dx * dx + dz * dz > 2.5f * 2.5f) continue;
+        float p[8] __attribute__((aligned(16))) = {pos[0], pos[1], pos[2], 0};
+        g_tp((void *)reg_entry(i), p);
+        return 1;
+    }
+    return 0;
+}
 void skin_share_alien(int on, int tag) { g_alien_tag = tag; InterlockedExchange(&g_alien_on, on); }
 void skin_set_alien(int ok, const float pos[3]) {
     if (!g_alien_on || !g_lcs.DebugInfo) return;

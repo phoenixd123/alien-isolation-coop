@@ -9,3 +9,4 @@ int  skin_level_has_skin(void);                             /* this level ships 
 const char *skin_status(void);
 void skin_share_alien(int on, int tag);                     /* joiner: keep our alien where the host's is */
 void skin_set_alien(int ok, const float pos[3]);            /* the host's alien (net thread) */
+int  skin_teleport_player(const float pos[3], const float cam[3]);   /* game thread: 1 moved, 0 no player found, -1 build mismatch */

@@ -200,6 +200,7 @@ void ui_render(const UiFrame *f, uint32_t *argb, int W, int H) {
     }
     if (f->flash_t && f->now - f->flash_t < 2000u) vignette(&c, RED, (int)(130 * (1.f - (f->now - f->flash_t) / 2000.f)), 170 * s);
     if (f->both_t && f->now - f->both_t < 5000u && !f->spect) banner(&c, "BOTH DOWN", "RETURNING TO CHECKPOINT", RED, NULL);
+    if (f->cut_t && f->now - f->cut_t < 3500u && !f->spect) { snprintf(a, sizeof a, "JOINING %s", nm); banner(&c, "CUTSCENE", a, GREEN, "MOVED TO YOUR PARTNER FOR THE SCENE"); }
 
     GdipDeleteBrush(c.br); GdipDeletePen(c.pen); GdipDeleteGraphics(c.g); GdipDisposeImage(bmp);
 }

@@ -71,6 +71,11 @@ int main(int argc, char **argv) {
     f.follow_on = 0; f.give_up = 0; f.peer_f[1] = 1; f.alien_ok = 1; f.alien_p[0] = 3; f.alien_p[2] = 4; f.now = 3300;
     ui_render(&f, buf, W, H); save(dir, "7_biomonitor", buf, W, H);
 
+    /* moved to the partner for a cutscene */
+    memset(&f, 0, sizeof f); f.W = W; f.H = H; f.now = 9000; f.peer_name = "Sam"; f.linked = 1; f.peer_live = 1; f.me_in_level = 1;
+    f.me_f[0] = 0; f.me_f[1] = 1; f.cut_t = 8200; f.mk_show = 1; f.mk_on = 1; f.mk_sx = W / 2 + 60; f.mk_sy = H / 2; f.mk_dist = 1.1f;
+    ui_render(&f, buf, W, H); save(dir, "8_cutscene", buf, W, H);
+
     free(buf);
     return 0;
 }

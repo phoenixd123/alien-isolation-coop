@@ -148,3 +148,27 @@ static inline int proto_check_skin(const SkinPkt *k, int len) {
     for (int i = 0; i < 24; i++) { char c = k->skin[i]; if (!c) return i > 0; if (!(c == '_' || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) return 0; }
     return 0;
 }
+
+/* kind 6: a cutscene just started in the sender's game; `pos` is where the receiver should land (cutscene.h).
+   `id` is random per cutscene so the three copies count once. */
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;
+    uint8_t  version, kind, pad[2];
+    uint32_t id;
+    float    pos[3];
+    uint32_t check;
+} CutPkt;
+#pragma pack(pop)
+_Static_assert(sizeof(CutPkt) == 28, "CutPkt must be 28 bytes");
+static inline void proto_fill_cut(CutPkt *k, uint32_t id, const float pos[3]) {
+    memset(k, 0, sizeof *k);
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 6; k->id = id; memcpy(k->pos, pos, 12);
+    k->check = proto_sum(k, offsetof(CutPkt, check));
+}
+static inline int proto_check_cut(const CutPkt *k, int len) {
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 6 || !k->id) return 0;
+    if (k->check != proto_sum(k, offsetof(CutPkt, check))) return 0;
+    for (int i = 0; i < 3; i++) if (!(k->pos[i] == k->pos[i]) || k->pos[i] > 5000.f || k->pos[i] < -5000.f) return 0;
+    return 1;
+}
