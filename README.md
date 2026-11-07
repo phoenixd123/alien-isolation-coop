@@ -95,10 +95,18 @@ If the level doesn't have your pick, you show up as another story character the 
 | MARLOW, WAIT, VERLAINE, CONNOR, DR_KUHLMAN, SPACESUIT_HEYST, SPACESUIT_MEEKS | one or two levels each (see `coopnet/skins.h`) |
 | ANDROID (experimental) | 13 levels |
 
-Levels with none of these (ENG_REACTORCORE, ENG_TOWPLATFORM, ENG_ALIEN_NEST, HAB_CORPORATEPENT, SCI_HOSPITALLOWER,
-TECH_RND, TECH_RND_HZDLAB, TECH_MUTHRCORE, the Survivor map) still use the
-borrowed-NPC body where there is one. The next step is copying skin models into every level, the way AI-MP
-does it for its crew characters.
+To get the main skins into every level at once, run `tools/skinprep` (needs .NET 8) with the game closed:
+
+```
+dotnet skinprep.dll "<game folder>"            # copies TAYLOR, SAMUELS, AXEL, RICARDO, MARLOW into every level
+dotnet skinprep.dll "<game folder>" --restore  # puts the original level files back
+```
+
+It copies each character model with everything it renders with into the levels that lack it, re-loads each
+written level to check it, and backs up the originals to `coop_backup\levels\` first. It writes
+`coop_skins.txt` so the mod knows which levels now have which skins. Tested on the test copy: 18 levels
+changed, none failed. TECH_COMMS is skipped because CathodeLib can't read all of one of its mission scripts
+(it keeps the skins it already ships). Not checked in game yet: whether every changed level still loads.
 
 ## Known issues
 

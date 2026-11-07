@@ -11,6 +11,7 @@
 #pragma once
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef struct {
     const char *name;        /* display_model, also the name players pick */
@@ -51,10 +52,37 @@ static inline const Skin *skin_find(const char *name) {
     return NULL;
 }
 
+/* Skins copied into levels by tools/skinprep, from coop_skins.txt ("LEVEL SKIN SKIN ..." per line), kept as
+   " LEVEL:SKIN " tokens. */
+static char skin_extra[8192];
+static inline int skin_tok_end(char c) { return c == 0 || c == ' ' || c == 9 || c == 10 || c == 13; }
+static inline void skin_extra_add_line(const char *line) {
+    char lv[48]; int n = 0;
+    while (*line == ' ') line++;
+    while (!skin_tok_end(*line) && n < 47) lv[n++] = *line++;
+    lv[n] = 0;
+    if (!n) return;
+    for (;;) {
+        while (*line == ' ' || *line == 9) line++;
+        char sk[32]; int m = 0;
+        while (!skin_tok_end(*line) && m < 31) sk[m++] = *line++;
+        sk[m] = 0;
+        if (!m) break;
+        size_t L = strlen(skin_extra);
+        if (L + (size_t)n + (size_t)m + 4 < sizeof skin_extra) {
+            if (!L) skin_extra[L++] = ' ';
+            memcpy(skin_extra + L, lv, (size_t)n); L += (size_t)n; skin_extra[L++] = ':';
+            memcpy(skin_extra + L, sk, (size_t)m); L += (size_t)m; skin_extra[L++] = ' '; skin_extra[L] = 0;
+        }
+    }
+}
+
 static inline int skin_in_level(const Skin *s, const char *level) {
     if (!s || !level || !*level || strlen(level) > 40) return 0;
-    char k[48]; k[0] = ' '; strcpy(k + 1, level); strcat(k, " ");
-    return strstr(s->levels, k) != NULL;
+    char k[96]; k[0] = ' '; strcpy(k + 1, level); strcat(k, " ");
+    if (strstr(s->levels, k)) return 1;
+    snprintf(k, sizeof k, " %s:%s ", level, s->name);
+    return strstr(skin_extra, k) != NULL;
 }
 
 /* The skin to show for a partner who picked `want` in `level`: their pick if the level has it, otherwise the

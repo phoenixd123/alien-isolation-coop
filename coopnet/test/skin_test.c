@@ -57,6 +57,15 @@ int main(void) {
     for (int i = 0; i < 10; i++) with += skin_choose("TAYLOR", lvls[i]) != NULL;
     CHECK(with == 10, "levels with a story skin");
 
+    /* skins copied in by skinprep (coop_skins.txt) */
+    CHECK(skin_choose("TAYLOR", "TECH_RND") == NULL, "before the list: nothing in TECH_RND");
+    { char l1[64], l2[64]; snprintf(l1, sizeof l1, "TECH_RND TAYLOR SAMUELS AXEL%c%c", 13, 10); snprintf(l2, sizeof l2, "DLC_CHALLENGEMAP16 MARLOW%c", 10);
+      skin_extra_add_line(l1); skin_extra_add_line(l2); }
+    CHECK(skin_choose("TAYLOR", "TECH_RND") == skin_find("TAYLOR"), "copied skin is used");
+    CHECK(skin_choose("MARLOW", "TECH_RND") == skin_find("TAYLOR"), "skin not copied there falls back");
+    CHECK(skin_choose("MARLOW", "DLC_CHALLENGEMAP16") == skin_find("MARLOW"), "Survivor map");
+    CHECK(skin_choose("AXEL", "TECH_RND_HZDLAB") == NULL, "level names don't match by prefix");
+
     /* packet */
     SkinPkt k; proto_fill_skin(&k, "DR_KUHLMAN");
     CHECK(proto_check_skin(&k, sizeof k) && !strcmp(k.skin, "DR_KUHLMAN"), "skin packet round trip");

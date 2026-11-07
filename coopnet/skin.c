@@ -199,6 +199,13 @@ void skin_init_level_watch(void (*logf)(const char *, ...)) {
 
 int skin_install(void (*logf)(const char *, ...)) {
     skin_init_level_watch(logf);
+    {   /* skins copied into levels by tools/skinprep */
+        char path[MAX_PATH]; GetModuleFileNameA(NULL, path, sizeof path);
+        char *sl = strrchr(path, 92 /* backslash */); if (sl) strcpy(sl + 1, "coop_skins.txt");
+        FILE *f = fopen(path, "r"); int n = 0;
+        if (f) { char line[512]; while (fgets(line, sizeof line, f)) { skin_extra_add_line(line); n++; } fclose(f); }
+        logf("skin: %d levels listed in coop_skins.txt", n);
+    }
     g_base = (uintptr_t)GetModuleHandleW(NULL);
     static const uint8_t sig_mgr[7] = {0x6A, 0xFF, 0x68, 0x28, 0xDE, 0x12, 0x01};
     static const uint8_t sig_spawn[10] = {0x55, 0x8B, 0xEC, 0x56, 0x57, 0xB8, 0x40, 0x01, 0x00, 0x00};
