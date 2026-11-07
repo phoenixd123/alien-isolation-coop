@@ -99,7 +99,7 @@ static inline int proto_check_life(const LifePkt *k, int len) {
     return k->check == proto_sum(k, offsetof(LifePkt, check));
 }
 
-/* kind 4: where the sender's alien is (character-table record, see alien.c). 10 Hz. flags bit0 = found. */
+/* kind 4: where the sender's alien is (character-table record). 30 Hz. flags bit0 = found. */
 #pragma pack(push, 1)
 typedef struct {
     uint32_t magic;

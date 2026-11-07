@@ -832,7 +832,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
         {
             static DWORD last_chars;
             int in_lvl = c.ok && (c.p[0] != 0.f || c.p[1] != 0.f || c.p[2] != 0.f);
-            if (in_lvl && now - last_chars >= 100) { read_chars(); last_chars = now; }
+            if (in_lvl && now - last_chars >= 33) { read_chars(); last_chars = now; }   /* 30 Hz: the alien position drives the joiner's alien */
             tracker_sound(in_lvl, g_couch || (g_game && GetForegroundWindow() == g_game));
         }
         {

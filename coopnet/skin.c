@@ -11,9 +11,11 @@
  *
  * Off unless AIC_SKINS=1 (not tested in game yet). AIC_SKIN=<name> picks the skin your partner sees you as.
  *
- * Shared alien (joiner, AIC_SHARED_ALIEN=1, not tested in game yet): the same hook finds the joiner's own alien in
- * the registry (tag at +0x8C) and, when it is more than 4 m from where the host's alien is, teleports it there
- * (at most once a second). In between it moves on its own AI, which already follows the host's director.
+ * Shared alien (joiner, AIC_SHARED_ALIEN=1, not tested in game yet): the host sends its alien's position 30 times
+ * a second. The joiner keeps the last few samples and plays them back 50 ms behind, interpolated (alien_interp.h),
+ * and on every engine frame puts its own alien (registry tag at +0x8C) on that point whenever it is more than
+ * 10 cm off. So the joiner's alien is where the host's alien is, to within a frame or two. Its facing and
+ * animation are still its own.
  */
 #include <windows.h>
 #include <stdint.h>
@@ -22,6 +24,7 @@
 #include <math.h>
 #include "skins.h"
 #include "skin.h"
+#include "alien_interp.h"
 
 #define RVA_MGR_UPDATE  0x3CC080u
 #define RVA_SPAWN130    0x014C90u
@@ -65,11 +68,11 @@ static int g_bodies = 1;
 /* shared alien: the host's alien position (net thread) */
 static volatile LONG g_alien_on, g_alien_ok;
 static int g_alien_tag = 3;
-static float g_alien_pos[3];
+static AlienTrack g_atrack;                      /* samples from the host (guarded by g_lcs) */
 static volatile DWORD g_alien_t;
-static DWORD g_alien_tp_t; static unsigned g_alien_tps;
-#define ALIEN_SNAP_M   4.0f
-#define ALIEN_SNAP_MS  1000
+static unsigned g_alien_tps; static DWORD g_alien_log_t;
+#define ALIEN_EPS_M    0.10f                     /* correct when further off than this */
+#define ALIEN_DELAY_MS 50
 static char g_status[96] = "off";
 
 static int rd(uintptr_t a, void *o, size_t n) {
@@ -94,19 +97,23 @@ static void reset_body(const char *why) {
 
 static void alien_tick(void) {
     DWORD now = GetTickCount();
-    if (!g_alien_on || !g_alien_ok || now - g_alien_t > 500 || now - g_alien_tp_t < ALIEN_SNAP_MS) return;
-    float t[3]; EnterCriticalSection(&g_lcs); memcpy(t, g_alien_pos, 12); LeaveCriticalSection(&g_lcs);
+    if (!g_alien_on || !g_alien_ok || now - g_alien_t > 500) return;
+    float t[3]; int have;
+    EnterCriticalSection(&g_lcs); have = alien_track_at(&g_atrack, now - ALIEN_DELAY_MS, t); LeaveCriticalSection(&g_lcs);
+    if (!have) return;
     for (int i = 0; i < REG_COUNT; i++) {
         uint32_t tag = 0; float cur[3];
         if (i == g_bound_slot || !reg_chr(i, 1)) continue;
         if (!rd(reg_entry(i) + 0x8C, &tag, 4) || (int)tag != g_alien_tag || !rd(reg_entry(i) + 0x80, cur, 12)) continue;
         float dx = t[0] - cur[0], dy = t[1] - cur[1], dz = t[2] - cur[2];
-        if (dx * dx + dy * dy + dz * dz > ALIEN_SNAP_M * ALIEN_SNAP_M) {
+        if (dx * dx + dy * dy + dz * dz > ALIEN_EPS_M * ALIEN_EPS_M) {
             float pos[8] __attribute__((aligned(16))) = {t[0], t[1], t[2], 0};
             g_tp((void *)reg_entry(i), pos);
-            g_alien_tp_t = now; g_alien_tps++;
-            if (g_log && (g_alien_tps == 1 || g_alien_tps % 50 == 0))
-                g_log("alien: moved ours to the host's alien (%.1f m apart, slot %d, %u times)", sqrtf(dx * dx + dy * dy + dz * dz), i, g_alien_tps);
+            g_alien_tps++;
+            if (g_log && (g_alien_tps == 1 || now - g_alien_log_t > 10000)) {
+                g_alien_log_t = now;
+                g_log("alien: following the host's alien (%.2f m off before this frame, slot %d, %u corrections)", sqrtf(dx * dx + dy * dy + dz * dz), i, g_alien_tps);
+            }
         }
         return;
     }
@@ -283,7 +290,7 @@ int skin_active(void) { return g_active != 0; }
 void skin_share_alien(int on, int tag) { g_alien_tag = tag; InterlockedExchange(&g_alien_on, on); }
 void skin_set_alien(int ok, const float pos[3]) {
     if (!g_alien_on || !g_lcs.DebugInfo) return;
-    if (ok) { EnterCriticalSection(&g_lcs); memcpy(g_alien_pos, pos, 12); LeaveCriticalSection(&g_lcs); g_alien_t = GetTickCount(); }
+    if (ok) { DWORD now = GetTickCount(); EnterCriticalSection(&g_lcs); alien_track_push(&g_atrack, now, pos); LeaveCriticalSection(&g_lcs); g_alien_t = now; }
     InterlockedExchange(&g_alien_ok, ok);
 }
 int skin_level_has_skin(void) {

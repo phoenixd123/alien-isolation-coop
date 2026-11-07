@@ -98,12 +98,41 @@ What's shared:
 | you take a lift, tram or exit to another level | they load the same level |
 | (host only) the alien comes out, retreats or changes behaviour | their alien does the same |
 
-**Why this works in every level:** doors, locks, items, keycards, tools and level exits are all built from the
-same shared blocks, with the same IDs in every level. I checked all 20 levels' files (the table is in
-[testing.md](testing.md)). The two LV426 levels use their own doors, so door sync doesn't reach them.
+### Automatic: no rule per door, story step or puzzle
 
-**Story progress** works because mission scripts gate each step behind a block that can only fire once. Firing the
-same one in your partner's game moves their mission forward without doing anything twice.
+The table above covers the few things that need translating (opening a door, hiding a picked-up item). Everything
+else is found automatically from the level files, by asking two questions about every block in every level:
+
+1. **Does the game save it?** Blocks marked "persistent" hold the world's state: a door cut open, a generator
+   switched on, a puzzle solved, a story flag. When one changes in your game, it's set the same way in your
+   partner's. Setting something that's already set does nothing, so it can't go wrong twice.
+2. **Can it only ever happen once?** Mission and level scripts put every one-time step behind a *once* gate:
+   story progress, the start of a cutscene, a scripted event, a puzzle finishing. When one fires in your game it
+   fires in your partner's, and their script carries on from there. A once gate can't fire twice, so nothing
+   doubles up. Things that repeat (music, lights, hint boxes) don't use these gates, so they stay with each player.
+
+Blocks that belong to one player rather than the world are left out: thrown items, weapons, cameras, NPC brains,
+the UI and hiding in lockers.
+
+```mermaid
+flowchart LR
+    A["all 20 levels' scripts"] -->|levelmod syncscan| B["every block, with its kind,<br/>'saved?' flag and inputs"]
+    B -->|gen_syncmap.py| C{"saved state?<br/>or once-only?"}
+    C -->|"yes, and not a player's own"| D["syncmap.h<br/>1,394 blocks"]
+    C -->|no| E["stays local"]
+    D --> F["coopnet shares any change<br/>to these, in any level"]
+```
+
+That gives 135 saved-state blocks and 1,259 once-only steps across the game, between about 30 and 260 in each
+level. Nobody wrote a rule for any of them, and a game update or another level would be picked up by running the
+generator again.
+
+**Story progress and cutscenes** work through the once gates: firing the same gate in your partner's game moves
+their mission forward without doing anything twice.
+
+The hand-written rules work in every level too: doors, locks, items, keycards, tools and level exits are built
+from the same shared blocks, with the same IDs in every level (the check is in [testing.md](testing.md)). The two
+LV426 levels use their own doors, so the door-opening rule doesn't reach them.
 
 **Only these actions are accepted from the network**, so a partner (or anyone else) can't make your game run
 arbitrary script.
@@ -113,9 +142,11 @@ arbitrary script.
 - **One director.** The host's game decides when the alien comes out of the vents, when it retreats and how
   aggressive it is. Those decisions are sent to the joiner's game, whose alien follows them. The joiner's game
   never sends its own.
-- **Shared alien (experimental).** Each game still has its own alien. In experimental mode, the joiner's alien is
-  moved to where the host's alien is whenever they get more than 4 m apart, so you both deal with the alien in
-  the same place. In between it hunts on its own.
+- **Shared alien (experimental).** The host sends its alien's position 30 times a second. The joiner's game plays
+  that path back a few hundredths of a second behind, smoothing between updates, and every frame puts its own
+  alien on that exact spot whenever it's more than 10 cm off. A sudden jump (the alien leaving through a vent
+  somewhere else) is followed as a jump, not a slide across the map. What isn't shared yet is the way it faces
+  and which animation it plays; those still come from the joiner's own alien.
 
 ## Dying together
 
@@ -175,9 +206,9 @@ they're drawn with, into every level. It backs up the originals first; uninstall
 
 ## What it doesn't do (yet)
 
-- Cutscenes, computer terminals, rewiring panels and lift rides inside a level aren't shared, so long sessions
-  can drift apart. Start from the same save.
+- Things that can happen again and again (riding a lift inside a level, using a terminal twice) aren't shared;
+  only saved state and once-only steps are. Start from the same save.
 - Your partner's body walks by being moved, not by playing walking animations.
-- Each game still has its own alien; experimental mode only keeps the joiner's near the host's.
-- The newest parts (skins in game, shared alien, lock and level-change sync, starting from the lobby) haven't been
-  run in the game yet. [testing.md](testing.md) lists what has.
+- The joiner's alien follows the host's alien's position exactly, but faces and animates on its own.
+- The newest parts (automatic world sync, skins in game, the shared alien, lock and level-change sync, starting
+  from the lobby) haven't been run in the game yet. [testing.md](testing.md) lists what has.

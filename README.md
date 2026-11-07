@@ -38,9 +38,10 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Skins: your partner shows up as a story character you pick (Taylor, Samuels, Axel...) | written and tested offline, not tried in game yet; off unless `AIC_SKINS=1` |
 | Keycards and tools shared | written, not tried in a level yet |
 | Locked doors: one of you unlocks it (hack, keycard, code, lever, button) or cuts it open, it's open for both | written, not tried in a level yet |
+| Automatic world sync: every saved world state and every one-time scripted step, in every level, with no per-object rules (1,394 objects found in the level files) | written and tested offline, not tried in a level yet |
 | Level changes: when one of you takes a lift, tram or exit to another level, the other loads it too | written, not tried in a level yet |
 | Host's alien director drives the joiner's alien (vents, behaviour, stage) | written, not tried in a level yet |
-| One alien in the same place for both players: the joiner's alien is moved to where the host's is | written, not tried in a level yet; part of the lobby's experimental mode (`AIC_SHARED_ALIEN=1`) |
+| One alien in the same place for both players: the joiner's alien follows the host's alien's exact path (30 updates a second, smoothed) | written and tested offline, not tried in a level yet; part of the lobby's experimental mode (`AIC_SHARED_ALIEN=1`) |
 | New overlay: motion tracker, partner marker, death screens | tracker and marker checked in a level (airport, two copies on one PC); death screens only checked in rendered previews so far |
 | Split screen on one PC through [Couchlink](https://github.com/cranebeaker/couchlink) | recipe written, seats tested by hand, not run inside Couchlink yet |
 | Lobbies and Steam invites | planned, see [docs/online.md](docs/online.md) |
@@ -151,9 +152,9 @@ changed level still loads.
 - The partner marker is an overlay, so you can see it through walls. The 3D body only exists in the airport
   level for now.
 - Each game still has its own alien. They follow the same director decisions but hunt on their own between them.
-- Cutscenes, terminals, rewiring, lift rides inside a level and anything else a mission does outside doors,
-  locks, items, keycards, story steps and level changes isn't synced, so long sessions can drift. Start from the
-  same save.
+- Things that happen over and over (lift rides inside a level, a terminal you can use again, music and light
+  zones) stay with the player who did them; only saved state and one-time steps are shared. Start from the same
+  save.
 - A level change you follow skips the save the game normally makes right before it.
 - Only deaths that go through the game's normal death script are caught. If one slips through you just get
   the regular game-over menu (look for `life: player died` in the log).
@@ -185,10 +186,18 @@ lets two copies run side by side (`AIC_PROFILE`), and loads `coopnet.dll`.
   | the `SwitchLevel` script loads another level | the same `SwitchLevel`, so they load that level too |
   | a pickup sets its "collected" value | the load-time "already taken" path, which hides the item |
   | a `LogicOnce` in one of the 35 story mission composites fires | the same `LogicOnce`, and their mission script carries on |
+  | **automatic:** a persistent `VariableBool`/`LogicSwitch` is set, or a never-reset `LogicOnce` fires, anywhere in the world | the same, found from `coopnet/syncmap.h` |
   | `SetPlayerHasKeycard` / `SetPlayerHasGatingTool` | the same, so they get the card or tool |
   | (host only) `NPC_WithdrawAlien`, `NPC_AlienConfig`, `NPC_SetAlienDevelopmentStage` | the same on their alien |
 
-  Only these methods are accepted from the network, and nothing received gets sent back. `AIC_SYNC=0` turns it off.
+  The automatic part comes from the level files, not from hand-written rules: `levelmod syncscan` dumps every
+  level's scripts and `tools/syncmap/gen_syncmap.py` picks every entity the game saves (persistent bools and
+  switches set by scripts) and every one-time gate (`LogicOnce` that nothing resets), leaving out composites that
+  belong to one player (thrown items, weapons, cameras, NPC brains, UI, hiding). The result is a sorted ID table
+  compiled into coopnet: 135 state entities and 1,259 one-time steps across the 20 levels.
+
+  Only these methods, and entities in that table, are accepted from the network, and nothing received gets sent
+  back. `AIC_SYNC=0` turns it off.
 - **Death.** It catches `TriggerDeath` on the player's `Health_Damage_Death` script. While you're spectating it
   holds back the game-over menu (a vtable hook at exe `0x1300224`), the fade and the death blur, and writes your
   partner's camera into the death camera's records so your game renders their view. When both are down it shows

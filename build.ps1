@@ -35,6 +35,10 @@ Z -O2 -Wall -Wextra -o "$out\life_test.exe" "$root\coopnet\test\life_test.c" "$r
 & "$out\life_test.exe"; if ($LASTEXITCODE) { throw "life_test failed" }
 Z -O2 -Wall -Wextra -o "$out\skin_test.exe" "$root\coopnet\test\skin_test.c"
 & "$out\skin_test.exe"; if ($LASTEXITCODE) { throw "skin_test failed" }
+# automatic world sync table (coopnet\syncmap.h) and the joiner's alien playback; the table generator's own rules
+Z -O2 -Wall -Wextra -o "$out\sync_test.exe" "$root\coopnet\test\sync_test.c"
+& "$out\sync_test.exe"; if ($LASTEXITCODE) { throw "sync_test failed" }
+if (Get-Command python -ErrorAction SilentlyContinue) { & python -I "$root\tools\syncmap\gen_syncmap.py" --selftest; if ($LASTEXITCODE) { throw "gen_syncmap selftest failed" } }
 Z -O2 -Wall -Wextra -o "$out\hud_test.exe" "$root\coopnet\test\hud_test.c"
 & "$out\hud_test.exe"; if ($LASTEXITCODE) { throw "hud_test failed" }
 # lobby: launcher window, its screens rendered to images (build\lobby\), and the protocol/LAN test on loopback

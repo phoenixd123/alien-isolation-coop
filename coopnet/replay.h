@@ -5,7 +5,7 @@
 /* path[0] = ID of the composite-instance entity that owns the target, path[1] its owner, ... up to the root. */
 typedef struct {
     uint32_t method, eid, type; uint32_t path[8]; int npath;
-    int (*owner_ok)(uint32_t owner_type);   /* optional: the owner composite's type must pass */
+    int (*owner_ok)(uint32_t owner_type, uint32_t eid);   /* optional: the owner composite's type must pass */
     int via_hook;                           /* tests: dispatch through the hook so capture sees it */
 } ReplayKey;
 void replay_set_hook(uint32_t(__attribute__((thiscall)) *hook)(void *, void *, void *, void *));

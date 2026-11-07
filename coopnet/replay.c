@@ -41,7 +41,7 @@ static int chain_ok(uint32_t ent, const ReplayKey *k) {
     for (int i = 0; i < k->npath; i++) {
         uint32_t b[4], p[5];
         if (!rd(hb, b, sizeof b) || !rd(b[3], p, sizeof p) || p[3] != k->path[i]) return 0;
-        if (i == 0 && k->owner_ok && !k->owner_ok(p[4])) return 0;
+        if (i == 0 && k->owner_ok && !k->owner_ok(p[4], k->eid)) return 0;
         hb = p[2];
     }
     return 1;

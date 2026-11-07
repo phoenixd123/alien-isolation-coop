@@ -2,6 +2,7 @@
 //   find <levelsDir> <text>                  composites / entities / function types matching text
 //   funcs <COMMANDS.PAK> <FuncType>          every entity of a function type, with parameters
 //   ids / comp                               dump entity IDs / one composite
+//   syncscan <COMMANDS.PAK>                  world-state candidates for automatic sync (tools/syncmap reads these)
 //   drivenpc <COMMANDS.PAK> <composite> <npc>  add the partner-body marker, go-to and loop next to an NPC
 //   addpartner                               old attempt at a new character (engine never spawns it)
 using System;
@@ -41,6 +42,29 @@ static class P {
                     }
                 }
                 Console.WriteLine($"{Path.GetFileName(lvl)}: {c.Entries.Count} composites, {hits} hits");
+            }
+            return 0;
+        }
+        if (a[0] == "syncscan") {
+            // syncscan <COMMANDS.PAK>: candidate world-state entities for automatic sync, one per line:
+            // compGuid  compName  entGuid  entName  type  persistent  inMethods(comma)
+            // inMethods = the input names other entities in the same composite link to (what can change it).
+            var c = Load(a[1]);
+            foreach (var comp in c.Entries) {
+                var incoming = new Dictionary<ShortGuid, HashSet<string>>();
+                foreach (var f in comp.functions)
+                    foreach (var l in f.childLinks) {
+                        if (!incoming.TryGetValue(l.linkedEntityID, out var set)) incoming[l.linkedEntityID] = set = new HashSet<string>();
+                        set.Add(l.linkedParamID.ToString());
+                    }
+                foreach (var f in comp.functions) {
+                    string type = c.GetComposite(f.function) != null ? "composite" : f.function.ToString();
+                    bool pers = f.parameters.Any(p => p.name.ToString() == "is_persistent" && p.content is cBool b && b.value);
+                    incoming.TryGetValue(f.shortGUID, out var ins);
+                    string im = ins == null ? "" : string.Join(",", ins.OrderBy(x => x));
+                    var cg = BitConverter.ToUInt32(comp.shortGUID.ToBytes(), 0); var eg = BitConverter.ToUInt32(f.shortGUID.ToBytes(), 0);
+                    Console.WriteLine($"{cg:x8}\t{comp.name}\t{eg:x8}\t{c.Utils.GetEntityName(comp.shortGUID, f.shortGUID)}\t{type}\t{(pers ? 1 : 0)}\t{im}");
+                }
             }
             return 0;
         }

@@ -21,7 +21,7 @@
  *
  *   Locks (Archetypes\Misc_Subarchetypes\Door_Mechanism): IsLocked.set_false -> the same. Every way a door gets
  *     unlocked ends here: hacking, keycard, keycode, lever, button. So a door one player unlocks is unlocked for both.
- *   Cutting (Door_Mechanism): IsCuttingCompleted.set_true -> the same. A door cut open with the torch stays open.
+ *   Cutting (Door_Mechanism IsCuttingCompleted, persistent): covered by the automatic STATE kind below.
  *   Level change (Archetypes\Script\Mission\SwitchLevel): SwitchLevel_1.trigger -> the same. Every lift, tram and
  *     mission exit that loads another level goes through this script, so when one player leaves the level the other
  *     loads the same one. After a level change, more level changes are ignored for a while so it can't bounce back.
@@ -31,14 +31,23 @@
  *     one that just fired can't double-fire anything; the partner's own mission script continues from there.
  *     Entity wildcard (eid 0 = the captured entity); on apply, its owner must be a story composite.
  *
- * Only methods that appear as an `apply` here are accepted from the network.
- * Echo guard: a path changed by a remote event is not reported back for a few seconds.
+ * Automatic (syncmap.h, generated from every level's scripts by tools/syncmap): on top of the rules above, any
+ *   level-script entity of these two kinds is shared, in every level, with no per-object rule:
+ *     STATE  a persistent VariableBool / LogicSwitch (what a save keeps: cut doors, power, puzzle results, story
+ *            flags): set_true / set_false -> the same.
+ *     ONCE   a LogicOnce nothing resets (one-time story steps, cutscene starts, scripted events, puzzle
+ *            completions): trigger -> the same. It fires at most once on each side.
+ *   Player-owned composites (thrown items, weapons, cameras, NPC brains, UI, hiding) are left out by the generator.
+ *
+ * Only methods that appear as an `apply` here, or entities in syncmap.h, are accepted from the network.
+ * Echo guard: an entity changed by a remote event is not reported back for a few seconds.
  */
 #include <windows.h>
 #include <stdint.h>
 #include <string.h>
 #include "replay.h"
 #include "worldsync.h"
+#include "syncmap.h"
 
 #define SG_TRIGGER       0xd9d0ca29u
 #define SG_SET_TRUE      0x5eb0e648u
@@ -49,6 +58,7 @@
 #define C_SWITCHLEVEL    0xef3722dcu   /* Archetypes\Script\Mission\SwitchLevel */
 #define LEVEL_COOLDOWN_MS 20000
 #define T_LOGICSWITCH    0x0e423fccu
+#define T_VARBOOL        0x0e1cb504u
 #define T_DOOR           0xaf6549bbu
 #define T_SETINTEGER     0x02a3673bu
 #define T_INTEGEREQUALS  0xd2590676u
@@ -79,6 +89,8 @@ static int is_story(uint32_t c) {
     return 0;
 }
 static int is_alien_owner(uint32_t c) { return c == C_BACKSTAGE || is_story(c); }
+static int is_story_e(uint32_t c, uint32_t eid) { (void)eid; return is_story(c); }
+static int is_alien_owner_e(uint32_t c, uint32_t eid) { (void)eid; return is_alien_owner(c); }
 static int owner_match(uint32_t want, uint32_t c) {
     return want == OWNER_STORY ? is_story(c) : want == OWNER_ALIEN ? is_alien_owner(c) : c == want;
 }
@@ -103,8 +115,6 @@ static const Rule RULES[] = {
       { { SG_TRIGGER, 0, T_ALIENSTAGE } }, 1, 0 },
     { "unlock", C_DOOR_MECHANISM, { SG_SET_FALSE, 0x09de34aeu, T_LOGICSWITCH },
       { { SG_SET_FALSE, 0x09de34aeu, T_LOGICSWITCH } }, 0, 0 },
-    { "cut", C_DOOR_MECHANISM, { SG_SET_TRUE, 0x26dbce33u, T_LOGICSWITCH },
-      { { SG_SET_TRUE, 0x26dbce33u, T_LOGICSWITCH } }, 0, 0 },
     { "level", C_SWITCHLEVEL, { SG_TRIGGER, 0x92d9160au, T_SWITCHLEVEL },
       { { SG_TRIGGER, 0x92d9160au, T_SWITCHLEVEL } }, 0, 1 },
 };
@@ -134,6 +144,26 @@ static uint32_t path_hash(const uint32_t *p, int n) {
     for (int i = 0; i < n; i++) { h ^= p[i]; h *= 16777619u; }
     return h;
 }
+/* Echo key: the entity itself (path + ID), so other changes in the same composite still go out. */
+static uint32_t ent_key(const uint32_t *p, int n, uint32_t eid) { uint32_t h = path_hash(p, n) ^ eid; h *= 16777619u; return h ? h : 1; }
+
+/* Which automatic kind a message is: 1 STATE (set_true/set_false on a bool or switch), 2 ONCE (trigger on a LogicOnce). */
+static int generic_kind(uint32_t m, uint32_t type) {
+    if (m == SG_TRIGGER && type == T_LOGICONCE) return 2;
+    if ((m == SG_SET_TRUE || m == SG_SET_FALSE) && (type == T_LOGICSWITCH || type == T_VARBOOL)) return 1;
+    return 0;
+}
+static int generic_owner_ok(uint32_t owner, uint32_t eid) { return syncmap_kind(owner, eid) != 0; }
+
+/* ONCE events already sent recently (a LogicOnce keeps receiving trigger after it has fired). */
+typedef struct { uint32_t k; DWORD t; } Sent;
+static Sent g_sent[256]; static int g_sent_i;
+static int sent_recently(uint32_t k) {
+    DWORD now = GetTickCount();
+    for (int i = 0; i < 256; i++) if (g_sent[i].k == k && now - g_sent[i].t < 30000) return 1;
+    g_sent[g_sent_i].k = k; g_sent[g_sent_i].t = now; g_sent_i = (g_sent_i + 1) & 255;
+    return 0;
+}
 
 static int echo_recent(uint32_t h) {
     DWORD now = GetTickCount(); int hit = 0;
@@ -157,8 +187,9 @@ void ws_init(void (*logf)(const char *, ...)) {
     g_logf = logf;
     InitializeCriticalSection(&g_cs);
     g_on = 1;
-    logf("worldsync: %d rules (doors, locks, cutting, pickups, keycards, tools, level changes, alien director [host], story LogicOnce in %d mission composites)",
-         NRULES, (int)(sizeof STORY / sizeof STORY[0]));
+    logf("worldsync: %d rules (doors, locks, pickups, keycards, tools, level changes, alien director [host], story LogicOnce in %d mission composites) "
+         "+ %d automatic entities from every level (persistent state and one-time steps)",
+         NRULES, (int)(sizeof STORY / sizeof STORY[0]), SYNCMAP_N);
 }
 
 /* Owner chain of an entity: path[0] = ID of the instance entity that owns it, then its owner, ... */
@@ -194,7 +225,7 @@ void ws_on_call(const uint32_t *msg, const uint32_t *target) {
         uint32_t owner = 0;
         ev.npath = read_path((uint32_t)(uintptr_t)target, ev.path, &owner);
         if (ev.npath == 0 || !owner_match(R->owner, owner)) continue;   /* another rule may share the trigger */
-        if (echo_recent(path_hash(ev.path, ev.npath))) return;
+        if (echo_recent(ent_key(ev.path, ev.npath, eid))) return;
         if (R->level) { if (level_cooling()) return; InterlockedExchange(&g_level_t, (LONG)(GetTickCount() | 1)); }
         for (int a = 0; a < 3 && R->apply[a].method; a++) {
             ev.method = R->apply[a].method; ev.eid = R->apply[a].eid ? R->apply[a].eid : eid; ev.type = R->apply[a].type;
@@ -202,6 +233,18 @@ void ws_on_call(const uint32_t *msg, const uint32_t *target) {
         }
         return;
     }
+    /* automatic: anything in syncmap.h */
+    int gk = generic_kind(m, type);
+    if (!gk) return;
+    WorldEvt ev; memset(&ev, 0, sizeof ev);
+    uint32_t owner = 0;
+    ev.npath = read_path((uint32_t)(uintptr_t)target, ev.path, &owner);
+    if (ev.npath == 0 || syncmap_kind(owner, eid) != gk) return;
+    uint32_t key = ent_key(ev.path, ev.npath, eid);
+    if (echo_recent(key)) return;
+    if (gk == 2 && sent_recently(key ^ m)) return;
+    ev.method = m; ev.eid = eid; ev.type = type;
+    push(&ev);
 }
 
 int ws_pop(WorldEvt *ev) {
@@ -213,16 +256,19 @@ int ws_pop(WorldEvt *ev) {
 
 void ws_apply(const WorldEvt *ev) {
     if (!g_on) return;
-    int ok = 0, level = 0; uint32_t owner = 0;
+    int ok = 0, level = 0, generic = 0; uint32_t owner = 0, when_eid = ev->eid;
     for (int r = 0; r < NRULES && !ok; r++) {
         if (RULES[r].host_only && g_host) continue;   /* the host's alien is the real one */
         for (int a = 0; a < 3 && RULES[r].apply[a].method; a++) {
             const Act *A = &RULES[r].apply[a];
             if (A->method == ev->method && (A->eid ? A->eid == ev->eid : ev->eid != 0) && A->type == ev->type) {
-                ok = 1; owner = RULES[r].owner; level = RULES[r].level; break;
+                ok = 1; owner = RULES[r].owner; level = RULES[r].level;
+                if (RULES[r].when.eid) when_eid = RULES[r].when.eid;   /* echo on what the partner's capture will see */
+                break;
             }
         }
     }
+    if (!ok && generic_kind(ev->method, ev->type) && ev->eid) ok = generic = 1;
     if (!ok) { g_logf("worldsync: ignored an event that matches no rule (%08x on %08x)", ev->method, ev->eid); return; }
     if (level) {
         if (level_cooling()) { g_logf("worldsync: level change ignored (one just happened)"); return; }
@@ -232,8 +278,9 @@ void ws_apply(const WorldEvt *ev) {
     ReplayKey k; memset(&k, 0, sizeof k);
     k.method = ev->method; k.eid = ev->eid; k.type = ev->type; k.npath = ev->npath;
     memcpy(k.path, ev->path, (size_t)ev->npath * 4);
-    if (owner == OWNER_STORY) k.owner_ok = is_story;
-    else if (owner == OWNER_ALIEN) k.owner_ok = is_alien_owner;
-    echo_mark(path_hash(ev->path, ev->npath));
+    if (generic) k.owner_ok = generic_owner_ok;
+    else if (owner == OWNER_STORY) k.owner_ok = is_story_e;
+    else if (owner == OWNER_ALIEN) k.owner_ok = is_alien_owner_e;
+    echo_mark(ent_key(ev->path, ev->npath, when_eid));
     replay_request(&k);
 }
