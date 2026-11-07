@@ -7,6 +7,12 @@ items and keycards they pick up, story steps they reach, and when they die.
 It's still a prototype. A lot already works in game and a lot doesn't yet; the table below shows which is
 which.
 
+| In a level | When you die |
+|---|---|
+| ![Partner marker and motion tracker](docs/img/level.png) | ![Spectating your partner](docs/img/spectating.png) |
+
+The overlay as it renders in game (shown here over a plain backdrop).
+
 ## Where it's at
 
 I've only tested it on the Steam version (build 4940658), and so far mostly with two copies of the game on one
@@ -29,7 +35,7 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Keycards and tools shared | written, not tried in a level yet |
 | Host's alien director drives the joiner's alien (vents, behaviour, stage) | written, not tried in a level yet |
 | One alien in the same place for both players | not done |
-| Motion tracker, pings, heartbeat, partner-down sting | drawn at the menu, not seen in a level yet |
+| New overlay: motion tracker, partner marker, death screens | tracker and marker checked in a level (airport, two copies on one PC); death screens only checked in rendered previews so far |
 | Split screen on one PC through [Couchlink](https://github.com/cranebeaker/couchlink) | recipe written, seats tested by hand, not run inside Couchlink yet |
 | Lobbies and Steam invites | planned, see [docs/online.md](docs/online.md) |
 

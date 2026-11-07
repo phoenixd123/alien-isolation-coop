@@ -24,6 +24,8 @@
 #include "life.h"
 #include "hud.h"
 #include "sfx.h"
+#include "ui.h"
+#include <stdlib.h>
 #include <dwmapi.h>
 
 int probe_install(const char *dir, const char *profile, void (*logf)(const char *, ...));
@@ -582,221 +584,99 @@ static volatile DWORD g_mark_t;
 static volatile LONG g_thumb_ok;   /* couch spectating: the partner's window is shown live */
 static volatile LONG g_give_up;
 
-static void text(HDC dc, int x, int y, COLORREF c, const char *s) { SetTextColor(dc, c); TextOutA(dc, x, y, s, (int)strlen(s)); }
-static void text_c(HDC dc, int cx, int y, COLORREF c, const char *s) {
-    SIZE z; GetTextExtentPoint32A(dc, s, (int)strlen(s), &z); text(dc, cx - z.cx / 2, y, c, s);
-}
-static void dot(HDC dc, int x, int y, int r, COLORREF c) {
-    HBRUSH b = CreateSolidBrush(c); HGDIOBJ ob = SelectObject(dc, b);
-    HPEN p = CreatePen(PS_SOLID, 1, c); HGDIOBJ op = SelectObject(dc, p);
-    Ellipse(dc, x - r, y - r, x + r + 1, y + r + 1);
-    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(b); DeleteObject(p);
-}
+static volatile float g_f9_prog;   /* F9 hold progress while spectating, 0..1 */
 
-typedef struct { float p[3]; COLORREF c; int r; const char *label; } Blip;
-
-/* A motion-tracker disc at (cx, cy), radius R, centred on `at` facing `f`. Black is the overlay's
-   transparent colour, so the disc is filled very dark green instead. Labelled blips out of range stick to the rim. */
-static void draw_tracker(HDC dc, int cx, int cy, int R, const float at[3], const float f[2], const Blip *bl, int nb) {
-    HBRUSH bg = CreateSolidBrush(RGB(4, 22, 12)); HGDIOBJ ob = SelectObject(dc, bg);
-    HPEN rim = CreatePen(PS_SOLID, 2, RGB(60, 170, 110)); HGDIOBJ op = SelectObject(dc, rim);
-    Ellipse(dc, cx - R, cy - R, cx + R, cy + R);
-    SelectObject(dc, GetStockObject(NULL_BRUSH));
-    HPEN ring = CreatePen(PS_SOLID, 1, RGB(30, 90, 60)); SelectObject(dc, ring);
-    for (int i = 1; i < 3; i++) { int r = R * i / 3; Ellipse(dc, cx - r, cy - r, cx + r, cy + r); }
-    MoveToEx(dc, cx - R, cy, NULL); LineTo(dc, cx + R, cy); MoveToEx(dc, cx, cy - R, NULL); LineTo(dc, cx, cy + R);
-    float a = (float)(GetTickCount() % 2000) / 2000.f * 6.2831853f;   /* sweep line, one turn every 2 s */
-    HPEN sw = CreatePen(PS_SOLID, 2, RGB(70, 210, 130)); SelectObject(dc, sw);
-    MoveToEx(dc, cx, cy, NULL); LineTo(dc, cx + (int)(sinf(a) * R), cy - (int)(cosf(a) * R));
-    SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(bg); DeleteObject(rim); DeleteObject(ring); DeleteObject(sw);
-    dot(dc, cx, cy, 3, RGB(70, 210, 130));
-    for (int i = 0; i < nb; i++) {
-        float x, y, d = hud_track(at, f, bl[i].p, &x, &y);
-        int edge = 0;
-        if (d > TRACK_RANGE) {
-            if (!bl[i].label) continue;
-            float n = sqrtf(x * x + y * y); x /= n; y /= n; edge = 1;
-        }
-        int px = cx + (int)(x * (float)(R - 6)), py = cy - (int)(y * (float)(R - 6));
-        dot(dc, px, py, edge ? bl[i].r - 1 : bl[i].r, bl[i].c);
-        if (bl[i].label) { char l[48]; snprintf(l, sizeof l, "%s %.0fm", bl[i].label, d); text(dc, px + 8, py - 9, bl[i].c, l); }
-    }
-}
-
-/* The partner marker in the 3D view (circle with name and distance, or an arrow at the edge). */
-static void draw_marker(HDC dc, int W, int H, const Cam *mep, const Peer *pep) {
-    Cam me = *mep; Peer pe = *pep; char line[160];
-    ViewMark mk = view_project(me.p, me.q, pe.p, W, H, g_fwd_sign);
-    float dist = mk.dist, *c = mk.cam, z = c[2];
-    int sx = mk.sx, sy = mk.sy, on = mk.on;
-    g_mark = mk; g_mark_t = GetTickCount();
-    HPEN pen = CreatePen(PS_SOLID, 3, RGB(80, 255, 120)); HGDIOBJ op = SelectObject(dc, pen);
-    HGDIOBJ ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    SetTextColor(dc, RGB(80, 255, 120));
-    if (on) {
-        int r = (int)(600.f / (dist + 2.f)); if (r < 6) r = 6; if (r > 40) r = 40;
-        Ellipse(dc, sx - r, sy - r, sx + r, sy + r);
-        MoveToEx(dc, sx, sy + r, NULL); LineTo(dc, sx, sy + 3 * r);
-        snprintf(line, sizeof line, "%s  %.1f m", pe.name, dist);
-        TextOutA(dc, sx + r + 6, sy - 8, line, (int)strlen(line));
-    } else {
-        /* edge arrow: direction in camera x/y plane; behind -> flip */
-        float ex = c[0], ey = c[1];
-        if (z <= 0.05f && fabsf(ex) < 1e-3f && fabsf(ey) < 1e-3f) ex = 1.f;
-        float len = sqrtf(ex * ex + ey * ey); ex /= len; ey /= len;
-        float cx = W * 0.5f, cy = H * 0.5f, k = fminf((cx - 40) / fmaxf(fabsf(ex), 1e-3f), (cy - 40) / fmaxf(fabsf(ey), 1e-3f));
-        int ax_ = (int)(cx + ex * k), ay_ = (int)(cy - ey * k);
-        POINT tri[3] = {{ax_ + (int)(ex * 22), ay_ - (int)(ey * 22)},
-                        {ax_ + (int)(-ey * 12), ay_ - (int)(ex * 12)},
-                        {ax_ + (int)(ey * 12), ay_ + (int)(ex * 12)}};
-        HBRUSH gb = CreateSolidBrush(RGB(80, 255, 120)); SelectObject(dc, gb); Polygon(dc, tri, 3);
-        SelectObject(dc, GetStockObject(NULL_BRUSH)); DeleteObject(gb);
-        snprintf(line, sizeof line, "%s %.1f m", pe.name, dist);
-        TextOutA(dc, ax_ - (ex > 0 ? 120 : -30), ay_ + (ey > 0 ? 20 : -36), line, (int)strlen(line));
-    }
-    SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(pen);
-}
-
-static void draw(HDC dc, int W, int H) {
-    RECT all = {0, 0, W, H};
-    HBRUSH black = CreateSolidBrush(RGB(0, 0, 0)); FillRect(dc, &all, black); DeleteObject(black);
+/* Snapshot our state into a UiFrame for ui.c. */
+static void build_frame(UiFrame *u, int W, int H) {
+    memset(u, 0, sizeof *u);
     DWORD now = GetTickCount();
-    Cam me; Peer pe; Life L; DWORD flash, both; float palien[3]; int palien_ok;
-    Blip bl[TRACK_SLOTS + 2]; int nb = 0;
+    u->W = W; u->H = H; u->now = now;
+    Cam me; Peer pe; Life L; DWORD flash, both;
     EnterCriticalSection(&g_cs);
     me = g_me; pe = g_peer; L = g_life; flash = g_flash_t; both = g_both_t;
-    memcpy(palien, g_peer_alien, 12); palien_ok = g_peer_alien_ok && now - g_peer_alien_t < 1500;
-    for (int k = 0; k < TRACK_SLOTS && nb < TRACK_SLOTS; k++)
+    u->alien_ok = g_peer_alien_ok && now - g_peer_alien_t < 1500; memcpy(u->alien_p, g_peer_alien, 12);
+    for (int k = 0; k < TRACK_SLOTS && u->nblips < UI_MAX_BLIPS - 1; k++)
         if (hud_motion_visible(&g_track[k], now) && g_track_tag[k] != 0) {
-            memcpy(bl[nb].p, g_track_pos[k], 12); bl[nb].c = RGB(235, 245, 235); bl[nb].r = 5; bl[nb].label = NULL; nb++;
+            UiBlip *b = &u->blips[u->nblips++]; memcpy(b->p, g_track_pos[k], 12); b->kind = 0; b->label = NULL;
         }
     LeaveCriticalSection(&g_cs);
-    SetBkMode(dc, TRANSPARENT);
-    char line[200];
+    static char name[16];
+    memcpy(name, pe.valid ? pe.name : "partner", 16); name[15] = 0;
+    u->peer_name = name;
     int live = pe.valid && now - pe.t_ms < 1500;
-    int linked = live || life_peer_live(&L, now);
-    int spect = L.state == LIFE_DEAD || g_spec_test;
-
-    if (spect && g_follow_on) {   /* ---- you are dead: your game shows the partner's view ---- */
-        RECT band = {0, 0, W, 40};
-        HBRUSH bb = CreateSolidBrush(RGB(16, 4, 4)); FillRect(dc, &band, bb); DeleteObject(bb);
-        snprintf(line, sizeof line, "SPECTATING %s", pe.valid ? pe.name : "your partner");
-        text_c(dc, W / 2, 9, RGB(230, 60, 50), line);
-        return;
-    }
-    if (spect) {   /* ---- you are dead: watch the partner ---- */
-        RECT band = {0, 0, W, 64};
-        HBRUSH bb = CreateSolidBrush(RGB(16, 4, 4)); FillRect(dc, &band, bb); DeleteObject(bb);
-        snprintf(line, sizeof line, "YOU DIED  -  watching %s", pe.valid ? pe.name : "your partner");
-        text_c(dc, W / 2, 8, RGB(230, 60, 50), line);
-        if (!linked) text_c(dc, W / 2, 34, RGB(200, 200, 200), "Partner signal lost... going back to the checkpoint soon");
-        else if (L.peer_state == LIFE_DEAD) text_c(dc, W / 2, 34, RGB(230, 60, 50), "Both down.");
-        else text_c(dc, W / 2, 34, RGB(190, 170, 170), "When they die too, you both go back to the last checkpoint.  Hold F9 to go back now.");
-        if (g_thumb_ok) return;   /* couch: the partner's own screen is shown under this band */
-        if (live) {
-            float f[2]; hud_forward(pe.q, f);
-            Blip pb[1]; int np = 0;
-            if (palien_ok) { memcpy(pb[0].p, palien, 12); pb[0].c = RGB(255, 70, 60); pb[0].r = 7; pb[0].label = "ALIEN"; np = 1; }
-            int R = (H < W ? H : W) * 34 / 100;
-            draw_tracker(dc, W / 2, H / 2 + 20, R, pe.p, f, pb, np);
-            snprintf(line, sizeof line, "BIO-MONITOR  %s", pe.name);
-            text_c(dc, W / 2, H / 2 + 20 - R - 30, RGB(80, 255, 140), line);
-            if (palien_ok) {
-                float dx = palien[0] - pe.p[0], dz = palien[2] - pe.p[2], d = sqrtf(dx * dx + dz * dz);
-                if (d < 8) snprintf(line, sizeof line, "IT IS RIGHT ON THEM  (%.0f m)", d);
-                else snprintf(line, sizeof line, "Alien %.0f m from them", d);
-                text_c(dc, W / 2, H / 2 + 20 + R + 12, d < 8 ? RGB(255, 70, 60) : RGB(220, 160, 150), line);
-            }
-        }
-        return;
-    }
-    if (!linked) {
-        snprintf(line, sizeof line, "CO-OP: waiting for %s...", pe.valid ? pe.name : "partner");
-        text(dc, 12, 10, RGB(200, 200, 200), line);
-        if (g_steam) {
-            if (steamnet_self()) snprintf(line, sizeof line, "Your Steam ID: %llu  (your friend joins with it)", (unsigned long long)steamnet_self());
-            else snprintf(line, sizeof line, "Connecting to Steam...");
-            text(dc, 12, 34, RGB(200, 200, 200), line);
-        }
-        return;
-    }
-    /* The menu camera sits at the origin: that is "not in a level" for both of us. */
-    int me_in = me.ok && (me.p[0] != 0.f || me.p[1] != 0.f || me.p[2] != 0.f);
-    if (live && pe.p[0] == 0.f && pe.p[1] == 0.f && pe.p[2] == 0.f) live = 0;
-    if (!me_in) {
-        snprintf(line, sizeof line, "CO-OP: %s connected (you are not in a level)", pe.valid ? pe.name : "partner");
-        text(dc, 12, 10, RGB(120, 255, 120), line);
-        return;
-    }
-    if (live && L.peer_state != LIFE_DEAD) draw_marker(dc, W, H, &me, &pe);
-    {   /* motion tracker, bottom left */
-        float f[2]; hud_forward(me.q, f);
-        if (live) {
-            memcpy(bl[nb].p, pe.p, 12); bl[nb].c = L.peer_state == LIFE_DEAD ? RGB(230, 60, 50) : RGB(80, 255, 120);
-            bl[nb].r = 6; bl[nb].label = pe.name; nb++;
-        }
-        int R = H / 9; if (R < 60) R = 60;
-        draw_tracker(dc, 24 + R, H - 24 - R, R, me.p, f, bl, nb);
-        if (live) {
+    u->linked = live || life_peer_live(&L, now);
+    u->spect = L.state == LIFE_DEAD || g_spec_test;
+    u->follow_on = g_follow_on; u->thumb_ok = g_thumb_ok;
+    u->peer_dead = L.peer_state == LIFE_DEAD && life_peer_live(&L, now);
+    u->flash_t = flash; u->both_t = both; u->give_up = g_f9_prog;
+    u->steam = g_steam; u->steam_id = g_steam ? steamnet_self() : 0;
+    if (live && pe.p[0] == 0.f && pe.p[1] == 0.f && pe.p[2] == 0.f) live = 0;   /* menu camera: not in a level */
+    u->peer_live = live;
+    u->me_in_level = me.ok && (me.p[0] != 0.f || me.p[1] != 0.f || me.p[2] != 0.f);
+    if (live) {
+        memcpy(u->peer_p, pe.p, 12); hud_forward(pe.q, u->peer_f);
+        if (u->me_in_level) {
+            ViewMark mk = view_project(me.p, me.q, pe.p, W, H, g_fwd_sign);
+            g_mark = mk; g_mark_t = now;
+            u->mk_show = 1; u->mk_on = mk.on; u->mk_sx = mk.sx; u->mk_sy = mk.sy; u->mk_dist = mk.dist;
+            u->mk_dir[0] = mk.cam[0]; u->mk_dir[1] = mk.cam[1];
+            if (mk.cam[2] <= 0.05f && fabsf(mk.cam[0]) < 1e-3f && fabsf(mk.cam[1]) < 1e-3f) u->mk_dir[0] = 1.f;
+            UiBlip *b = &u->blips[u->nblips++]; memcpy(b->p, pe.p, 12); b->kind = u->peer_dead ? 2 : 1; b->label = name;
             float dx = pe.p[0] - me.p[0], dz = pe.p[2] - me.p[2];
-            if (dx * dx + dz * dz > 40.f * 40.f && (now / 400) % 2) text(dc, 24, H - 48 - 2 * R, RGB(220, 200, 90), "PARTNER SIGNAL WEAK");
+            u->far_apart = dx * dx + dz * dz > 40.f * 40.f;
         }
     }
-    if (L.peer_state == LIFE_DEAD && life_peer_live(&L, now)) {
-        snprintf(line, sizeof line, "%s IS DOWN  -  they are watching you. Stay alive.", pe.valid ? pe.name : "YOUR PARTNER");
-        text_c(dc, W / 2, 12, RGB(230, 60, 50), line);
-    }
-    if (now - flash < 2000 && (now / 150) % 2) {   /* red edge flash when the partner dies */
-        HBRUSH r = CreateSolidBrush(RGB(170, 0, 0));
-        RECT e[4] = {{0, 0, W, 14}, {0, H - 14, W, H}, {0, 0, 14, H}, {W - 14, 0, W, H}};
-        for (int i = 0; i < 4; i++) FillRect(dc, &e[i], r);
-        DeleteObject(r);
-    }
-    if (now - both < 5000) text_c(dc, W / 2, H / 2 - 10, RGB(230, 60, 50), "Both down. Back to the last checkpoint...");
+    memcpy(u->me_p, me.p, 12); hud_forward(me.q, u->me_f);
 }
 
-static LRESULT CALLBACK ov_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == WM_PAINT) {
-        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
-        RECT r; GetClientRect(h, &r);
-        HDC mem = CreateCompatibleDC(dc); HBITMAP bm = CreateCompatibleBitmap(dc, r.right, r.bottom);
-        HGDIOBJ old = SelectObject(mem, bm);
-        HFONT f = CreateFontA(-18, 0, 0, 0, FW_BOLD, 0, 0, 0, ANSI_CHARSET, 0, 0, NONANTIALIASED_QUALITY, 0, "Segoe UI");
-        HGDIOBJ of = SelectObject(mem, f);
-        draw(mem, r.right, r.bottom);
-        BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
-        SelectObject(mem, of); DeleteObject(f); SelectObject(mem, old); DeleteObject(bm); DeleteDC(mem);
-        EndPaint(h, &ps); return 0;
-    }
-    if (m == WM_ERASEBKGND) return 1;
-    return DefWindowProcA(h, m, w, l);
-}
+static LRESULT CALLBACK ov_proc(HWND h, UINT m, WPARAM w, LPARAM l) { return DefWindowProcA(h, m, w, l); }
 
-/* Debug: coop_logs\ovdump_<profile>.req renders the overlay offscreen to ov_<profile>.bmp. */
+/* Debug: coop_logs\ovdump_<profile>.req renders the overlay offscreen to ov_<profile>.bmp (over black). */
 static void maybe_dump(int W, int H) {
     char req[MAX_PATH + 64], out[MAX_PATH + 64];
     snprintf(req, sizeof req, "%s\\coop_logs\\ovdump_%s.req", g_dir, g_profile);
     if (GetFileAttributesA(req) == INVALID_FILE_ATTRIBUTES || W <= 0 || H <= 0) return;
     DeleteFileA(req);
-    BITMAPINFO bi = {0}; bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = W; bi.bmiHeader.biHeight = -H;
-    bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
-    void *bits = NULL; HDC mem = CreateCompatibleDC(NULL);
-    HBITMAP bm = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
-    if (!bm) { DeleteDC(mem); return; }
-    HGDIOBJ old = SelectObject(mem, bm);
-    HFONT f = CreateFontA(-18, 0, 0, 0, FW_BOLD, 0, 0, 0, ANSI_CHARSET, 0, 0, NONANTIALIASED_QUALITY, 0, "Segoe UI");
-    HGDIOBJ of = SelectObject(mem, f);
-    draw(mem, W, H); GdiFlush();
+    uint32_t *px = malloc((size_t)W * H * 4);
+    if (!px) return;
+    UiFrame u; build_frame(&u, W, H); ui_render(&u, px, W, H);
     snprintf(out, sizeof out, "%s\\coop_logs\\ov_%s.bmp", g_dir, g_profile);
     FILE *fp = fopen(out, "wb");
     if (fp) {
         DWORD img = (DWORD)W * (DWORD)H * 4;
-        BITMAPFILEHEADER fh = {0}; fh.bfType = 0x4D42; fh.bfOffBits = sizeof fh + sizeof bi.bmiHeader; fh.bfSize = fh.bfOffBits + img;
-        BITMAPINFOHEADER ih = bi.bmiHeader; ih.biHeight = -H;
-        fwrite(&fh, sizeof fh, 1, fp); fwrite(&ih, sizeof ih, 1, fp); fwrite(bits, img, 1, fp); fclose(fp);
+        BITMAPFILEHEADER fh = {0}; BITMAPINFOHEADER ih = {0};
+        ih.biSize = sizeof ih; ih.biWidth = W; ih.biHeight = -H; ih.biPlanes = 1; ih.biBitCount = 32;
+        fh.bfType = 0x4D42; fh.bfOffBits = sizeof fh + sizeof ih; fh.bfSize = fh.bfOffBits + img;
+        fwrite(&fh, sizeof fh, 1, fp); fwrite(&ih, sizeof ih, 1, fp); fwrite(px, img, 1, fp); fclose(fp);
         logf_("overlay dump: %s (%dx%d)", out, W, H);
     }
-    SelectObject(mem, of); DeleteObject(f); SelectObject(mem, old); DeleteObject(bm); DeleteDC(mem);
+    free(px);
+}
+
+/* The overlay's pixels: a 32-bit DIB pushed with UpdateLayeredWindow (per-pixel alpha). */
+typedef struct { HDC dc; HBITMAP bm; HGDIOBJ old; uint32_t *px; int W, H; } OvSurf;
+static int ov_surf(OvSurf *s, int W, int H) {
+    if (s->bm && s->W == W && s->H == H) return 1;
+    if (s->bm) { SelectObject(s->dc, s->old); DeleteObject(s->bm); s->bm = NULL; }
+    if (!s->dc) s->dc = CreateCompatibleDC(NULL);
+    BITMAPINFO bi = {0}; bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = W; bi.bmiHeader.biHeight = -H;
+    bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    void *bits = NULL;
+    s->bm = CreateDIBSection(s->dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    if (!s->bm) return 0;
+    s->old = SelectObject(s->dc, s->bm); s->px = bits; s->W = W; s->H = H;
+    return 1;
+}
+static void ov_present(HWND h, OvSurf *s, POINT at) {
+    UiFrame u; build_frame(&u, s->W, s->H);
+    ui_render(&u, s->px, s->W, s->H);
+    GdiFlush();
+    SIZE sz = {s->W, s->H}; POINT zero = {0, 0};
+    BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    static int logged;
+    if (!UpdateLayeredWindow(h, NULL, &at, &sz, s->dc, &zero, 0, &bf, ULW_ALPHA)) {
+        if (!logged++) logf_("overlay: UpdateLayeredWindow failed (%lu)", (unsigned long)GetLastError());
+    } else if (logged == 0) { logged = -1; logf_("overlay: drawing %dx%d with per-pixel alpha", s->W, s->H); }
 }
 
 /* Partner's presence (camera) packets are arriving: the camera can follow them. */
@@ -833,7 +713,8 @@ static DWORD WINAPI overlay_thread(LPVOID p) {
     logf_("overlay: game window %p", (void *)g_game);
     g_ov = CreateWindowExA(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                            "AICoopOverlay", "", WS_POPUP, 0, 0, 10, 10, NULL, NULL, wc.hInstance, NULL);
-    SetLayeredWindowAttributes(g_ov, RGB(0, 0, 0), 0, LWA_COLORKEY);
+    if (!ui_init()) logf_("overlay: GDI+ failed to start, no overlay");
+    OvSurf surf = {0};
     /* Spectate backdrop under the overlay: the partner's live window (couch) or a dark veil (online). */
     HWND spec = NULL, src = NULL; HTHUMBNAIL thumb = NULL; int spec_mode = 0;   /* 1 veil, 2 thumbnail */
     DWORD f9_since = 0;
@@ -857,6 +738,7 @@ static DWORD WINAPI overlay_thread(LPVOID p) {
             if (!f9_since) f9_since = GetTickCount();
             else if (GetTickCount() - f9_since > 2000) { InterlockedExchange(&g_give_up, 1); f9_since = 0; }
         } else f9_since = 0;
+        g_f9_prog = f9_since ? (float)(GetTickCount() - f9_since) / 2000.f : 0.f;
 
         int want = !spect || g_follow_on || (g_follow_mode && now_live_peer()) ? 0 : ppid ? 2 : 1;
         if (want == 2 && src && !IsWindow(src)) want = 1;
@@ -887,9 +769,9 @@ static DWORD WINAPI overlay_thread(LPVOID p) {
                 DwmUpdateThumbnailProperties(thumb, &tp);
             }
         }
-        SetWindowPos(g_ov, HWND_TOPMOST, tl.x, tl.y, cr.right, cr.bottom, SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
-        InvalidateRect(g_ov, NULL, FALSE);
-        Sleep(16);
+        if (show && cr.right > 0 && cr.bottom > 0 && ov_surf(&surf, cr.right, cr.bottom)) ov_present(g_ov, &surf, tl);
+        SetWindowPos(g_ov, HWND_TOPMOST, tl.x, tl.y, cr.right, cr.bottom, SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+        Sleep(33);
     }
     if (thumb) DwmUnregisterThumbnail(thumb);
     return 0;
