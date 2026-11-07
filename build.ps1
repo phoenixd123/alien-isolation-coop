@@ -44,6 +44,10 @@ Z -O2 -Wall -Wextra -o "$out\lobby_preview.exe" "$root\lobby\test\lobby_preview.
 & "$out\lobby_preview.exe" "$out\lobby" | Out-Null; if ($LASTEXITCODE) { throw "lobby_preview failed" }
 Z -O2 -Wall -Wextra -o "$out\lobby_test.exe" "$root\lobby\test\lobby_test.c" "$root\lobby\lobbynet.c" -lws2_32
 & "$out\lobby_test.exe"; if ($LASTEXITCODE) { throw "lobby_test failed" }
+# skin cards for the README (build\skins\; copy to docs\img\skins\ when skins change)
+New-Item -ItemType Directory -Force "$out\skins" | Out-Null
+Z -O2 -Wall -Wextra -o "$out\skincards.exe" "$root\tools\skincards\skincards.c" -lgdiplus -lgdi32
+& "$out\skincards.exe" "$out\skins" | Out-Null; if ($LASTEXITCODE) { throw "skincards failed" }
 # Steam P2P transport against a fake steam_api that checks the MSVC argument layout
 $st = Join-Path $out "stest"
 if (Test-Path $st) { Remove-Item -Recurse -Force $st }

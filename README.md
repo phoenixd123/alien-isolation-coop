@@ -13,6 +13,8 @@ which.
 
 The overlay as it renders in game (shown here over a plain backdrop).
 
+**New to the mod? [How it works](docs/how-it-works.md) explains every part in plain terms, with diagrams.**
+
 ## Where it's at
 
 I've only tested it on the Steam version (build 4940658), and so far mostly with two copies of the game on one
@@ -110,16 +112,20 @@ when using `play-coop.bat`), and turn on the lobby's experimental mode. Your fri
 character, using a model the level already has. If the level doesn't have your pick, you show up as another
 story character the level does have.
 
-Out of the box, each character is only in the levels the story uses it in:
+Every skin, with how many of the 20 levels it can appear in out of the box and after `install.ps1 -Skins`
+(the cards are drawn by `tools/skincards`; in-game pictures come once skins have been run in the game):
 
-| Skin | Levels that have it |
+| | |
 |---|---|
-| TAYLOR | BSP_TORRENS, HAB_SHOPPINGCENTRE, SCI_HUB, SOLACE |
-| SAMUELS | BSP_TORRENS, HAB_SHOPPINGCENTRE, SCI_ANDROIDLAB, SCI_HUB |
-| AXEL | HAB_AIRPORT, SOLACE |
-| RICARDO | HAB_SHOPPINGCENTRE, SCI_HUB, TECH_COMMS, TECH_HUB |
-| MARLOW, WAIT, VERLAINE, CONNOR, DR_KUHLMAN, SPACESUIT_HEYST, SPACESUIT_MEEKS | one or two levels each (see `coopnet/skins.h`) |
-| ANDROID (experimental) | 13 levels |
+| ![TAYLOR](docs/img/skins/taylor.png) | ![SAMUELS](docs/img/skins/samuels.png) |
+| ![AXEL](docs/img/skins/axel.png) | ![RICARDO](docs/img/skins/ricardo.png) |
+| ![MARLOW](docs/img/skins/marlow.png) | ![WAIT](docs/img/skins/wait.png) |
+| ![VERLAINE](docs/img/skins/verlaine.png) | ![CONNOR](docs/img/skins/connor.png) |
+| ![DR_KUHLMAN](docs/img/skins/dr_kuhlman.png) | ![SPACESUIT_HEYST](docs/img/skins/spacesuit_heyst.png) |
+| ![SPACESUIT_MEEKS](docs/img/skins/spacesuit_meeks.png) | ![ANDROID](docs/img/skins/android.png) |
+
+The five main skins can be copied into every level; the others only appear in the levels the story uses them
+in, and elsewhere you show up as a main skin instead. Exact level lists are in `coopnet/skins.h`.
 
 To get the five main characters (Taylor, Samuels, Axel, Ricardo, Marlow) into every level, install with
 `-Skins`. It needs the [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) and takes about two
