@@ -18,6 +18,16 @@ motion tracker:       14 passed, 0 failed  (yaw, pitch ignored, motion window, t
 steam transport:      24 passed, 0 failed  (fake steam_api checks the MSVC argument layout both ways)
 ```
 
+## Installer
+
+2026-11-06, on the test copy of the game (Steam build 4940658), game closed, the packaged `install.ps1`:
+
+- `-Uninstall` on a copy that had skins: put back the original `steam_api.dll`, removed the mod files, and ran
+  `skinprep --restore`. I compared all 304 backed-up level files with the game's files afterwards: 0 differ, and
+  no file skinprep had added was left behind.
+- `-Skins`: installed the mod, `lobby.exe` and `skinprep`, then changed 19 levels with 0 failed (TECH_COMMS
+  skipped on purpose) in 132 s, and wrote `coop_skins.txt`.
+
 ## Sync rules across levels
 
 Not a game test: a check of the level files. I dumped every level's script IDs (`levelmod ids`) and looked for

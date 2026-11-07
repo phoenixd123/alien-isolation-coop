@@ -5,6 +5,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- no debug info or local paths in the shipped dll -->
+    <DebugType>none</DebugType>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CathodeLib" Version="0.12.2" />

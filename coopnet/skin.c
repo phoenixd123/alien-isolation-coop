@@ -10,6 +10,10 @@
  * The level being played comes from the files the game opens (...\PRODUCTION\<LEVEL>\WORLD\...).
  *
  * Off unless AIC_SKINS=1 (not tested in game yet). AIC_SKIN=<name> picks the skin your partner sees you as.
+ *
+ * Shared alien (joiner, AIC_SHARED_ALIEN=1, not tested in game yet): the same hook finds the joiner's own alien in
+ * the registry (tag at +0x8C) and, when it is more than 4 m from where the host's alien is, teleports it there
+ * (at most once a second). In between it moves on its own AI, which already follows the host's director.
  */
 #include <windows.h>
 #include <stdint.h>
@@ -56,6 +60,16 @@ static uint32_t g_bound_chr; static int g_bound_slot = -1;
 static DWORD g_pending_t, g_retry_t; static int g_tries; static uint32_t g_nonce;
 static const Skin *g_cur;
 static volatile LONG g_active;
+static int g_bodies = 1;
+
+/* shared alien: the host's alien position (net thread) */
+static volatile LONG g_alien_on, g_alien_ok;
+static int g_alien_tag = 3;
+static float g_alien_pos[3];
+static volatile DWORD g_alien_t;
+static DWORD g_alien_tp_t; static unsigned g_alien_tps;
+#define ALIEN_SNAP_M   4.0f
+#define ALIEN_SNAP_MS  1000
 static char g_status[96] = "off";
 
 static int rd(uintptr_t a, void *o, size_t n) {
@@ -78,7 +92,29 @@ static void reset_body(const char *why) {
     InterlockedExchange(&g_active, 0);
 }
 
+static void alien_tick(void) {
+    DWORD now = GetTickCount();
+    if (!g_alien_on || !g_alien_ok || now - g_alien_t > 500 || now - g_alien_tp_t < ALIEN_SNAP_MS) return;
+    float t[3]; EnterCriticalSection(&g_lcs); memcpy(t, g_alien_pos, 12); LeaveCriticalSection(&g_lcs);
+    for (int i = 0; i < REG_COUNT; i++) {
+        uint32_t tag = 0; float cur[3];
+        if (i == g_bound_slot || !reg_chr(i, 1)) continue;
+        if (!rd(reg_entry(i) + 0x8C, &tag, 4) || (int)tag != g_alien_tag || !rd(reg_entry(i) + 0x80, cur, 12)) continue;
+        float dx = t[0] - cur[0], dy = t[1] - cur[1], dz = t[2] - cur[2];
+        if (dx * dx + dy * dy + dz * dz > ALIEN_SNAP_M * ALIEN_SNAP_M) {
+            float pos[8] __attribute__((aligned(16))) = {t[0], t[1], t[2], 0};
+            g_tp((void *)reg_entry(i), pos);
+            g_alien_tp_t = now; g_alien_tps++;
+            if (g_log && (g_alien_tps == 1 || g_alien_tps % 50 == 0))
+                g_log("alien: moved ours to the host's alien (%.1f m apart, slot %d, %u times)", sqrtf(dx * dx + dy * dy + dz * dz), i, g_alien_tps);
+        }
+        return;
+    }
+}
+
 static void engine_tick(void *mgr) {
+    alien_tick();
+    if (!g_bodies) return;
     DWORD now = GetTickCount();
     LONG gen = g_level_gen;
     if (gen != g_seen_gen) { g_seen_gen = gen; reset_body("level changed"); }
@@ -197,7 +233,8 @@ void skin_init_level_watch(void (*logf)(const char *, ...)) {
     if (!g_cfa || !g_cfw) logf("skin: could not watch level loads (CreateFile import not found)");
 }
 
-int skin_install(void (*logf)(const char *, ...)) {
+int skin_install(void (*logf)(const char *, ...), int bodies) {
+    g_bodies = bodies;
     skin_init_level_watch(logf);
     {   /* skins copied into levels by tools/skinprep */
         char path[MAX_PATH]; GetModuleFileNameA(NULL, path, sizeof path);
@@ -229,7 +266,7 @@ int skin_install(void (*logf)(const char *, ...)) {
     VirtualProtect(mgr, 7, old, &old);
     FlushInstructionCache(GetCurrentProcess(), mgr, 7);
     g_on = 1;
-    status("on, waiting for a level and the partner");
+    status(bodies ? "on, waiting for a level and the partner" : "bodies off");
     return 1;
 }
 
@@ -243,6 +280,12 @@ void skin_set_target(int ok, const float feet[3]) {
     InterlockedExchange(&g_target_ok, ok);
 }
 int skin_active(void) { return g_active != 0; }
+void skin_share_alien(int on, int tag) { g_alien_tag = tag; InterlockedExchange(&g_alien_on, on); }
+void skin_set_alien(int ok, const float pos[3]) {
+    if (!g_alien_on || !g_lcs.DebugInfo) return;
+    if (ok) { EnterCriticalSection(&g_lcs); memcpy(g_alien_pos, pos, 12); LeaveCriticalSection(&g_lcs); g_alien_t = GetTickCount(); }
+    InterlockedExchange(&g_alien_ok, ok);
+}
 int skin_level_has_skin(void) {
     char level[48]; if (!g_lcs.DebugInfo) return 0;
     EnterCriticalSection(&g_lcs); memcpy(level, g_level, sizeof level); LeaveCriticalSection(&g_lcs);

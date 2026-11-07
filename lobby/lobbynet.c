@@ -356,6 +356,7 @@ int lb_launch_game(const char *game_dir, const LbLaunch *l, char *err, int errca
     SetEnvironmentVariableA("AIC_COOP_NAME", l->name && *l->name ? l->name : NULL);
     SetEnvironmentVariableA("AIC_SKIN", l->skin && *l->skin ? l->skin : NULL);
     SetEnvironmentVariableA("AIC_SKINS", l->skins ? "1" : NULL);
+    SetEnvironmentVariableA("AIC_SHARED_ALIEN", l->skins ? "1" : NULL);   /* the experimental switch covers both */
     if (l->profile && *l->profile) SetEnvironmentVariableA("AIC_PROFILE", l->profile);
     STARTUPINFOA si = {0}; si.cb = sizeof si; PROCESS_INFORMATION pi = {0};
     if (!CreateProcessA(exe, NULL, NULL, NULL, FALSE, 0, NULL, game_dir, &si, &pi)) {

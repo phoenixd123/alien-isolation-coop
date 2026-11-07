@@ -15,6 +15,7 @@
 #include "lobbynet.h"
 #include "lobbyui.h"
 #include "../coopnet/skins.h"
+#include "../coopnet/version.h"
 
 #define BASE_W 1000
 #define BASE_H 640
@@ -57,8 +58,8 @@ static void refresh_me(void) {
     snprintf(p, sizeof p, "%s\\AI.exe", g_dir); g_me.game = lb_game_build(p);
     g_me.save = lb_hash_saves(g_saves);
     g_me.present = 1;
-    if (g_me.mod) snprintf(g_version, sizeof g_version, "MOD BUILD %08X", g_me.mod);
-    else snprintf(g_version, sizeof g_version, "COOPNET.DLL MISSING");
+    if (g_me.mod) snprintf(g_version, sizeof g_version, "V%s  BUILD %08X", AIC_RELEASE, g_me.mod);
+    else snprintf(g_version, sizeof g_version, "V%s  COOPNET.DLL MISSING", AIC_RELEASE);
 }
 /* Copy name and skin into the running lobby (they can change on the main screen only, but keep it simple). */
 static void sync_me(void) {

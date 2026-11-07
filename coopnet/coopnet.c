@@ -27,6 +27,7 @@
 #include "ui.h"
 #include "skin.h"
 #include "skins.h"
+#include "version.h"
 #include <stdlib.h>
 #include <dwmapi.h>
 
@@ -38,6 +39,7 @@ void puppet_tick(int in_level, int peer_live, const float peer_cam_pos[3], void 
 
 static FILE *g_log, *g_csv;
 static int g_skins;              /* AIC_SKINS=1: partner body as a story character (skin.c) */
+static int g_share_alien;        /* AIC_SHARED_ALIEN=1: the joiner's alien is kept where the host's is (skin.c) */
 static char g_my_skin[24] = "TAYLOR";   /* AIC_SKIN: how the partner sees you */
 static char g_profile[32] = "default";
 static char g_name[16] = "partner";
@@ -501,6 +503,7 @@ static void on_alien(const AlienPkt *k) {
     EnterCriticalSection(&g_cs);
     if ((int32_t)(k->seq - g_peer_alien_seq) > 0 || GetTickCount() - g_peer_alien_t > 3000) {
         g_peer_alien_seq = k->seq; g_peer_alien_ok = k->flags & 1; memcpy(g_peer_alien, k->pos, 12); g_peer_alien_t = GetTickCount();
+        if (g_share_alien && !g_is_host) skin_set_alien(k->flags & 1, k->pos);
     }
     LeaveCriticalSection(&g_cs);
 }
@@ -908,7 +911,7 @@ static void init(HMODULE self) {
     probe_set_swallow(swallow_cb);
     hook_gameover_ui();
     CloseHandle(CreateThread(NULL, 0, follow_thread, NULL, 0, NULL));
-    logf_("coopnet up: profile=%s name=%s fwd_sign=%d couch_seat=%d alien_tag=%d pin=%d", g_profile, g_name, g_fwd_sign,
+    logf_("coopnet %s up: profile=%s name=%s fwd_sign=%d couch_seat=%d alien_tag=%d pin=%d", AIC_RELEASE, g_profile, g_name, g_fwd_sign,
           g_couch ? g_seat : -1, g_alien_tag, g_alien_pin);
     probe_install(g_dir, g_profile, logf_);
     {   /* skins: AIC_SKINS=1 turns them on (not tested in game yet); AIC_SKIN=<name> is how your partner sees you */
@@ -918,8 +921,10 @@ static void init(HMODULE self) {
             if (skin_find(sb)) lstrcpynA(g_my_skin, sb, sizeof g_my_skin); else logf_("skin: unknown skin %s, using %s", sb, g_my_skin);
         }
         g_skins = GetEnvironmentVariableA("AIC_SKINS", sb, sizeof sb) && sb[0] == '1';
-        if (g_skins && !skin_install(logf_)) g_skins = 0;
-        logf_("skin: %s (you are %s)", g_skins ? "on" : "off", g_my_skin);
+        g_share_alien = GetEnvironmentVariableA("AIC_SHARED_ALIEN", sb, sizeof sb) && sb[0] == '1';
+        if ((g_skins || g_share_alien) && !skin_install(logf_, g_skins)) g_skins = g_share_alien = 0;
+        if (g_share_alien) skin_share_alien(1, g_alien_tag);
+        logf_("skin: %s (you are %s); shared alien: %s", g_skins ? "on" : "off", g_my_skin, g_share_alien ? "on (joiner follows the host's alien)" : "off");
     }
     CloseHandle(CreateThread(NULL, 0, net_thread, NULL, 0, NULL));
     CloseHandle(CreateThread(NULL, 0, overlay_thread, NULL, 0, NULL));

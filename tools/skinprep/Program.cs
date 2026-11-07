@@ -334,11 +334,16 @@ static class P
         public void SaveTo(string stage)
         {
             Directory.CreateDirectory(Path.Combine(stage, "RENDERABLE")); Directory.CreateDirectory(Path.Combine(stage, "WORLD"));
-            foreach (var f in All)   // dependency order matters: it rebuilds lookup tables later files use
+            var old = Console.Out; Console.SetOut(TextWriter.Null);   // CathodeLib prints a line per table it saves
+            try
             {
-                var sub = f.Filepath.StartsWith(WorldRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? "WORLD" : "RENDERABLE";
-                if (!f.Save(Path.Combine(stage, sub, Path.GetFileName(f.Filepath)))) throw new IOException($"failed to write {sub}\\{Path.GetFileName(f.Filepath)}");
+                foreach (var f in All)   // dependency order matters: it rebuilds lookup tables later files use
+                {
+                    var sub = f.Filepath.StartsWith(WorldRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? "WORLD" : "RENDERABLE";
+                    if (!f.Save(Path.Combine(stage, sub, Path.GetFileName(f.Filepath)))) throw new IOException($"failed to write {sub}\\{Path.GetFileName(f.Filepath)}");
+                }
             }
+            finally { Console.SetOut(old); }
         }
     }
 

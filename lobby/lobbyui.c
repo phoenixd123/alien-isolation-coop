@@ -169,8 +169,8 @@ static void screen_main(Ui *u, const LbView *v) {
     line(c, with_a(GREEN, u->hover == LH_BODIES ? 220 : 120), 1, bx, y, bx + 20 * s, y); line(c, with_a(GREEN, u->hover == LH_BODIES ? 220 : 120), 1, bx, y + 20 * s, bx + 20 * s, y + 20 * s);
     line(c, with_a(GREEN, u->hover == LH_BODIES ? 220 : 120), 1, bx, y, bx, y + 20 * s); line(c, with_a(GREEN, u->hover == LH_BODIES ? 220 : 120), 1, bx + 20 * s, y, bx + 20 * s, y + 20 * s);
     if (v->bodies) fill(c, GREEN, bx + 5 * s, y + 5 * s, 10 * s, 10 * s);
-    text(c, "SHOW AS A CHARACTER", bx + 32 * s, y + 1 * s, 13 * s, v->bodies ? INK : DIM, 1, 2 * s, LEFT, 0);
-    text(c, "EXPERIMENTAL. BOTH PLAYERS NEED IT ON", bx + 32 * s, y + 20 * s, 10 * s, GREEN_LO, 0, 1 * s, LEFT, 0);
+    text(c, "EXPERIMENTAL MODE", bx + 32 * s, y + 1 * s, 13 * s, v->bodies ? INK : DIM, 1, 2 * s, LEFT, 0);
+    text(c, "CHARACTER BODIES + ONE SHARED ALIEN", bx + 32 * s, y + 20 * s, 10 * s, GREEN_LO, 0, 1 * s, LEFT, 0);
     add_hit(u, LH_BODIES, bx, y - 4 * s, lw - 40 * s, 40 * s);
 
     /* how it works */

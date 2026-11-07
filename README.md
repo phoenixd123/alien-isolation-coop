@@ -38,7 +38,7 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Locked doors: one of you unlocks it (hack, keycard, code, lever, button) or cuts it open, it's open for both | written, not tried in a level yet |
 | Level changes: when one of you takes a lift, tram or exit to another level, the other loads it too | written, not tried in a level yet |
 | Host's alien director drives the joiner's alien (vents, behaviour, stage) | written, not tried in a level yet |
-| One alien in the same place for both players | not done |
+| One alien in the same place for both players: the joiner's alien is moved to where the host's is | written, not tried in a level yet; part of the lobby's experimental mode (`AIC_SHARED_ALIEN=1`) |
 | New overlay: motion tracker, partner marker, death screens | tracker and marker checked in a level (airport, two copies on one PC); death screens only checked in rendered previews so far |
 | Split screen on one PC through [Couchlink](https://github.com/cranebeaker/couchlink) | recipe written, seats tested by hand, not run inside Couchlink yet |
 | Lobbies and Steam invites | planned, see [docs/online.md](docs/online.md) |
@@ -47,7 +47,7 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 
 1. Get `alien-isolation-coop.zip` from Releases (or build it, see below) and unzip it anywhere.
 2. Close the game, then in the unzipped folder run
-   `powershell -ExecutionPolicy Bypass -File install.ps1`.
+   `powershell -ExecutionPolicy Bypass -File install.ps1` (add `-Skins` for the experimental characters, see below).
    It finds the game through Steam, checks the version (other builds are refused unless you pass `-Force`),
    backs up `steam_api.dll`, and copies your saves into `coop_saves\default`. Your real saves aren't touched.
 3. With Steam running, start `lobby.exe` in the game folder on both PCs (see [Lobby](#lobby-lan) below).
@@ -105,9 +105,12 @@ a copy of `coop_saves\default`. One Steam account is enough here.
 
 ## Skins (experimental)
 
-Pick how your friend sees you: put a name in `skin.txt` next to the game (for example `SAMUELS`) and set
-`AIC_SKINS=1`. Your friend's game spawns you as that character, using a model the level already ships with.
-If the level doesn't have your pick, you show up as another story character the level does have.
+Pick how your friend sees you in the lobby (or put a name like `SAMUELS` in `skin.txt` and set `AIC_SKINS=1`
+when using `play-coop.bat`), and turn on the lobby's experimental mode. Your friend's game spawns you as that
+character, using a model the level already has. If the level doesn't have your pick, you show up as another
+story character the level does have.
+
+Out of the box, each character is only in the levels the story uses it in:
 
 | Skin | Levels that have it |
 |---|---|
@@ -118,18 +121,24 @@ If the level doesn't have your pick, you show up as another story character the 
 | MARLOW, WAIT, VERLAINE, CONNOR, DR_KUHLMAN, SPACESUIT_HEYST, SPACESUIT_MEEKS | one or two levels each (see `coopnet/skins.h`) |
 | ANDROID (experimental) | 13 levels |
 
-To get the main skins into every level at once, run `tools/skinprep` (needs .NET 8) with the game closed:
+To get the five main characters (Taylor, Samuels, Axel, Ricardo, Marlow) into every level, install with
+`-Skins`. It needs the [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) and takes about two
+minutes, with the game closed:
 
 ```
-dotnet skinprep.dll "<game folder>"            # copies TAYLOR, SAMUELS, AXEL, RICARDO, MARLOW into every level
-dotnet skinprep.dll "<game folder>" --restore  # puts the original level files back
+powershell -ExecutionPolicy Bypass -File install.ps1 -Skins
 ```
 
-It copies each character model with everything it renders with into the levels that lack it, re-loads each
-written level to check it, and backs up the originals to `coop_backup\levels\` first. It writes
-`coop_skins.txt` so the mod knows which levels now have which skins. Tested on the test copy: 18 levels
-changed, none failed. TECH_COMMS is skipped because CathodeLib can't read all of one of its mission scripts
-(it keeps the skins it already ships). Not checked in game yet: whether every changed level still loads.
+That runs `skinprep` (in the zip, source in `tools/skinprep`). It copies each character model with everything
+it renders with into the levels that lack it, re-loads each written level to check it, and backs up the
+originals to `coop_backup\levels\` first. It writes `coop_skins.txt` so the mod knows which levels now have which
+characters. Uninstalling puts the original level files back, and so does Steam's "Verify integrity of game files"
+(run the installer with `-Skins` again afterwards if you still want them).
+
+Tested on my test copy: install changed 19 levels with none failed, uninstall restored all 304 changed files
+byte for byte, and a second install worked the same. TECH_COMMS is skipped because CathodeLib can't read all of
+one of its mission scripts (it keeps the characters it already has). Not checked in game yet: whether every
+changed level still loads.
 
 ## Known issues
 
@@ -207,9 +216,10 @@ second copy). Logs go to `coop_logs\`.
 
 ## What I'm working on next
 
-1. Partner body in every level, set up by the installer on your own (backed-up) level files.
-2. One shared alien: the host's alien hunts both players, the joiner's alien copies its position, and a kill on
-   the joiner's body counts as the joiner's death. Survivor Mode first, since the alien is out from the start.
+1. Run the new parts in the game: skins in the levels skinprep changed, the shared alien, door unlocks and
+   level changes, and a game started from the lobby.
+2. One shared alien that really hunts both players: today the joiner's alien is only kept near the host's.
+   Next, a kill on the joiner's body should count as the joiner's death.
 3. A death by the alien, then a full mission with two players.
 4. Two PCs, two Steam accounts.
 5. Run the recipe inside Couchlink.
@@ -218,8 +228,9 @@ second copy). Logs go to `coop_logs\`.
 
 ## Credits
 
-- [CathodeLib](https://github.com/OpenCAGE/CathodeLib) by Matt Filer, used by `levelmod` to read and patch
-  level scripts.
+- [CathodeLib](https://github.com/OpenCAGE/CathodeLib) by Matt Filer, used by `levelmod` and `skinprep` to read and
+  patch level files. `skinprep` in the zip also ships K4os.Compression.LZ4 and K4os.Hash.xxHash (MIT) and
+  xxHash.NET (BSD); their licenses are in `third_party/licenses/`.
 - **AI-MP — originally created by Dropper7856** ([github.com/Dropper7856/AIMP](https://github.com/Dropper7856/AIMP)).
   The skin system spawns characters the way AI-MP does: its spawn-request layout and template values and its
   engine addresses (spawn handler, CharacterManager update, teleport, character registry). Used under the AI-MP
