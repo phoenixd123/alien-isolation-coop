@@ -70,13 +70,16 @@ int main(void) {
     CHECK(!cut_safe_spot(&tr, 0, s3), "no trail, no spot");
     for (int i = 0; i <= 30; i++) { float q[3] = {i * 0.1f, 2.f, 0.f}; cut_trail_push(&tr, 1000u + (uint32_t)i * 33u, q); }
     uint32_t tnow = 1000u + 30u * 33u;
-    CHECK(cut_safe_spot(&tr, tnow, s3) && fabsf(s3[0] - 2.0f) < 0.051f && s3[1] == 2.f, "spot 1 m behind on the path");
+    CHECK(cut_safe_spot(&tr, tnow, s3) && s3[0] <= 2.0f && s3[0] >= 1.5f && s3[1] == 2.f, "spot 1 m behind on the path");
+    CHECK(tr.n < 31, "points only every 0.3 m");
+    for (int i = 0; i < 100; i++) { float q[3] = {3.0f, 2.f, 0.f}; cut_trail_push(&tr, tnow + 33u * (uint32_t)i, q); }
+    CHECK(cut_safe_spot(&tr, tnow + 3300u, s3) && s3[0] <= 2.0f && s3[0] >= 1.5f, "standing still for 3 s keeps the spot behind (no landing inside them)");
     CutTrail st; memset(&st, 0, sizeof st);
     for (int i = 0; i < 10; i++) { float q[3] = {5.f, 0.f, 5.f}; cut_trail_push(&st, 100u + (uint32_t)i * 33u, q); }
     CHECK(cut_safe_spot(&st, 500, s3) && near3(s3, 5, 0, 5), "standing still: their own spot");
     CutTrail old; memset(&old, 0, sizeof old);
-    { float q0[3] = {0, 0, 0}, q1[3] = {3, 0, 0}; cut_trail_push(&old, 100, q0); cut_trail_push(&old, 9000, q1); }
-    CHECK(cut_safe_spot(&old, 9000, s3) && near3(s3, 3, 0, 0), "too old a point isn't used");
+    { float q0[3] = {0, 0, 0}, q1[3] = {3, 0, 0}; cut_trail_push(&old, 100, q0); cut_trail_push(&old, 90000, q1); }
+    CHECK(cut_safe_spot(&old, 90000, s3) && near3(s3, 3, 0, 0), "too old a point isn't used");
     for (int i = 0; i < 200; i++) { float q[3] = {(float)i, 0, 0}; cut_trail_push(&tr, 5000u + (uint32_t)i * 33u, q); }
     CHECK(tr.n == CUT_TRAIL && cut_safe_spot(&tr, 5000u + 199u * 33u, s3) && near3(s3, 198, 0, 0), "trail wraps");
 

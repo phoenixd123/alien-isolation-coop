@@ -33,8 +33,6 @@ flowchart LR
 - **`coopnet.dll`** is the co-op part: it reads what's happening in your game, talks to your partner's copy, and
   draws the overlay.
 - **`lobby.exe`** is the launcher. It finds your partner and checks you're set up the same, then starts both games.
-- **`skinprep`** (optional, run by the installer with `-Skins`) adds character models to the level files so your
-  partner can show up as a character everywhere.
 
 ## What gets sent between you
 
@@ -58,7 +56,7 @@ second.
   your partner is. Two ways:
   - **Skins (experimental):** the mod asks the game to spawn a story character (Taylor, Samuels, Axel...), the same
     way the game spawns its own characters, then keeps moving that character to wherever your partner stands.
-    The level must contain that character's model, which is what `skinprep` adds.
+    The level must already contain that character's model.
   - **Puppet (airport only, the older way):** an extra character the level already has is steered to your
     partner's position by a small addition to the level script.
 
@@ -247,9 +245,9 @@ same kind of spawn request the game uses for its own characters (the request lay
 Dropper7856), naming the character's model, skeleton and animations. Then it keeps that character where your
 partner is. See the [skin cards](../README.md#skins-experimental) for which characters exist and where.
 
-A level can only show a character whose model it contains. Out of the box most characters are in one to four
-levels. `install.ps1 -Skins` runs `skinprep`, which copies the five main characters' models, and everything
-they're drawn with, into every level. It backs up the originals first; uninstalling puts them back.
+A level can only show a character whose model it contains, and out of the box most characters are in one to
+four levels. Copying models into every level (`tools/skinprep`) is switched off: the library it uses writes the
+level's model files in a way the game won't load (found in in-game testing; details in [testing.md](testing.md)).
 
 ## What it doesn't do (yet)
 

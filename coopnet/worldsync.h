@@ -10,4 +10,5 @@ void ws_on_call(const uint32_t *msg, const uint32_t *target);   /* from the call
 int ws_pop(WorldEvt *ev);                                        /* next local change to send */
 void ws_apply(const WorldEvt *ev);                               /* a change from the partner */
 void ws_set_cutscene_cb(void (*cb)(void));
-void ws_pause(int paused);   /* builds differ: neither send nor accept world events */   /* called (game thread) when a cutscene starts in our game */
+void ws_pause(int paused);   /* builds differ: neither send nor accept world events */
+void ws_settle(uint32_t ms); /* a level just started: don't send for a while (its start-up scripts run on both sides) */   /* called (game thread) when a cutscene starts in our game */

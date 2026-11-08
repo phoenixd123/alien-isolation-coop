@@ -29,6 +29,30 @@ static volatile LONG g_in_replay;
 static cm_fn g_hook;
 void replay_set_hook(cm_fn hook) { g_hook = hook; }
 
+/* Keys that just failed to resolve (the entity isn't loaded in this game, e.g. a part of the level that's streamed
+   out): not looked up again for FAIL_MS, as each lookup scans memory. */
+#define FAIL_MS 20000
+static struct { uint32_t h; DWORD t; } g_fail[64]; static int g_fail_i;
+static CRITICAL_SECTION g_fail_cs;
+static uint32_t key_hash(const ReplayKey *k) {
+    uint32_t h = 2166136261u, v[3] = {k->method, k->eid, k->type};
+    for (int i = 0; i < 3; i++) { h ^= v[i]; h *= 16777619u; }
+    for (int i = 0; i < k->npath; i++) { h ^= k->path[i]; h *= 16777619u; }
+    return h ? h : 1;
+}
+static int failed_recently(uint32_t h) {
+    int hit = 0; DWORD now = GetTickCount();
+    EnterCriticalSection(&g_fail_cs);
+    for (int i = 0; i < 64; i++) if (g_fail[i].h == h && now - g_fail[i].t < FAIL_MS) { hit = 1; break; }
+    LeaveCriticalSection(&g_fail_cs);
+    return hit;
+}
+static void note_failed(uint32_t h) {
+    EnterCriticalSection(&g_fail_cs);
+    g_fail[g_fail_i].h = h; g_fail[g_fail_i].t = GetTickCount(); g_fail_i = (g_fail_i + 1) & 63;
+    LeaveCriticalSection(&g_fail_cs);
+}
+
 static int rd(uintptr_t a, void *o, size_t n) {
     SIZE_T got = 0;
     return a > 0x10000 && a < 0x7FFF0000 && ReadProcessMemory(GetCurrentProcess(), (LPCVOID)a, o, n, &got) && got == n;
@@ -101,7 +125,7 @@ static DWORD WINAPI worker(LPVOID p) {
             uint32_t hb = replay_resolve(&g_req[i].k);
             if (g_logf) g_logf("replay: resolve %08x/%08x (%d up) -> hb %08x in %lu ms", g_req[i].k.eid, g_req[i].k.method,
                                g_req[i].k.npath, hb, GetTickCount() - t);
-            if (!hb) { g_req[i].state = 0; continue; }
+            if (!hb) { note_failed(key_hash(&g_req[i].k)); g_req[i].state = 0; continue; }
             g_req[i].hb = hb; InterlockedExchange(&g_req[i].state, 2);
         }
     }
@@ -110,11 +134,13 @@ static DWORD WINAPI worker(LPVOID p) {
 
 void replay_init(void (*logf)(const char *, ...)) {
     g_logf = logf;
+    InitializeCriticalSection(&g_fail_cs);
     g_wake = CreateEventA(NULL, FALSE, FALSE, NULL);
     CloseHandle(CreateThread(NULL, 0, worker, NULL, 0, NULL));
 }
 
 int replay_request(const ReplayKey *k) {
+    if (g_fail_cs.DebugInfo && failed_recently(key_hash(k))) return 0;
     for (int i = 0; i < NREQ; i++)
         if (InterlockedCompareExchange(&g_req[i].state, -1, 0) == 0) {
             g_req[i].k = *k; InterlockedExchange(&g_req[i].state, 1); SetEvent(g_wake); return 1;

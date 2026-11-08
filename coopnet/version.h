@@ -1,3 +1,3 @@
 /* Release version, shown in the lobby and the logs. */
 #pragma once
-#define AIC_RELEASE "0.3.0"
+#define AIC_RELEASE "0.3.1"

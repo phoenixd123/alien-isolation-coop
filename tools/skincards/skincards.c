@@ -92,12 +92,12 @@ static int card(const Skin *s, int idx, int total, const char *dir) {
     { float w2 = text_w(&c, what, 11, 1, 2) + 16; fill(&c, with_a(GREEN, 34), tx, 96, w2, 20); text(&c, what, tx + 8, 100, 11, GREEN, 1, 2, LEFT, 0); tx += w2 + 8; }
     { float w2 = text_w(&c, tier, 11, 1, 2) + 16; fill(&c, with_a(acc, 34), tx, 96, w2, 20); text(&c, tier, tx + 8, 100, 11, acc, 1, 2, LEFT, 0); }
 
-    bar(&c, x, 134, CW - 30 - x - 6, "BUILT INTO THE GAME", nb, with_a(acc, 220));
-    bar(&c, x, 176, CW - 30 - x - 6, "WITH INSTALL -SKINS", nw, acc);
+    bar(&c, x, 150, CW - 30 - x - 6, "LEVELS THAT HAVE IT", nb, acc);
+    (void)nw;
 
     /* note */
     const char *note = s->experimental ? "ONLY WHEN PICKED. ITS ANIMATIONS MAY NOT FIT A PLAYER." :
-                       is_main(s->name) ? "COPIED INTO EVERY LEVEL BY THE INSTALLER (NOT TECH_COMMS)." :
+                       is_main(s->name) ? "ELSEWHERE YOU SHOW AS ANOTHER SKIN THE LEVEL HAS." :
                        "ONLY IN ITS OWN LEVELS. ELSEWHERE YOU SHOW AS A MAIN SKIN.";
     text(&c, note, x, 222, 10, with_a(INK, 190), 0, 1, LEFT, 0);
     char pick[64]; snprintf(pick, sizeof pick, "PICK IT IN THE LOBBY, OR SKIN.TXT: %s", s->name);

@@ -1,7 +1,7 @@
-# Builds steamwrap (steam_api.dll) and coopnet.dll, runs every offline test, and assembles the player package.
+﻿# Builds steamwrap (steam_api.dll) and coopnet.dll, runs every offline test, and assembles the player package.
 # Needs Zig 0.16.0 (https://ziglang.org/download/). Pass its path with -Zig, or have zig on PATH.
-# With the .NET 8 SDK (-Dotnet, or dotnet on PATH) it also publishes tools/skinprep into the package.
-param([string]$Zig = "zig", [string]$Dotnet = "dotnet")
+# -Skinprep (with the .NET 8 SDK) also builds tools/skinprep into the package; it is off for now (see below).
+param([string]$Zig = "zig", [string]$Dotnet = "dotnet", [switch]$Skinprep)
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $out = Join-Path $root "build"
@@ -69,13 +69,14 @@ New-Item -ItemType Directory -Force $pkg | Out-Null
 Copy-Item "$out\steam_api.dll", "$out\coopnet.dll", "$out\lobby.exe", "$root\dist\install.ps1", "$root\dist\play-coop.bat", "$root\README.md", "$root\LICENSE" $pkg
 Copy-Item -Recurse "$root\dist\couchlink" (Join-Path $pkg "couchlink")
 Copy-Item -Recurse "$root\third_party" (Join-Path $pkg "third_party")
-# skinprep (optional skins step of the installer); needs the .NET 8 runtime on the player's PC
-$dn = Get-Command $Dotnet -ErrorAction SilentlyContinue
+# skinprep isn't shipped: CathodeLib (0.12.2 and staging c3efa4ea) writes LEVEL_MODELS.PAK / MODELS_LEVEL.BIN so the
+# game can't load the level (docs/testing.md). Pass -Skinprep to build it anyway, for work on that.
+$dn = if ($Skinprep) { Get-Command $Dotnet -ErrorAction SilentlyContinue } else { $null }
 if ($dn) {
     & $Dotnet publish "$root\tools\skinprep" -c Release -o (Join-Path $pkg "skinprep") --self-contained false -p:DebugType=None -p:DebugSymbols=false -v q -nologo | Out-Null
     if ($LASTEXITCODE) { throw "skinprep publish failed" }
     Remove-Item (Join-Path $pkg "skinprep\*.pdb") -ErrorAction SilentlyContinue
-} else { "note: no .NET SDK, package built without skinprep" }
+}
 $zip = Join-Path $out "alien-isolation-coop.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path "$pkg\*" -DestinationPath $zip

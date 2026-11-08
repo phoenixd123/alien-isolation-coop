@@ -172,6 +172,10 @@ static int generic_owner_ok(uint32_t owner, uint32_t eid) { return syncmap_kind(
 
 static volatile LONG g_paused;
 void ws_pause(int paused) { InterlockedExchange(&g_paused, paused != 0); }
+static volatile LONG g_settle_until;
+static volatile LONG g_sent_clear;   /* a new level session: forget which one-time steps went out */
+void ws_settle(uint32_t ms) { InterlockedExchange(&g_settle_until, (LONG)((GetTickCount() + ms) | 1)); InterlockedExchange(&g_sent_clear, 1); }
+static int settling(void) { LONG u = g_settle_until; return u && (int32_t)((DWORD)u - GetTickCount()) > 0; }
 
 static void (*g_cut_cb)(void);
 static DWORD g_cut_t;
@@ -180,9 +184,10 @@ void ws_set_cutscene_cb(void (*cb)(void)) { g_cut_cb = cb; }
 /* ONCE events already sent recently (a LogicOnce keeps receiving trigger after it has fired). */
 typedef struct { uint32_t k; DWORD t; } Sent;
 static Sent g_sent[256]; static int g_sent_i;
-static int sent_recently(uint32_t k) {
+static int sent_recently(uint32_t k) {   /* once per level session (a fired LogicOnce can keep being triggered) */
     DWORD now = GetTickCount();
-    for (int i = 0; i < 256; i++) if (g_sent[i].k == k && now - g_sent[i].t < 30000) return 1;
+    if (InterlockedExchange(&g_sent_clear, 0)) memset(g_sent, 0, sizeof g_sent);
+    for (int i = 0; i < 256; i++) if (g_sent[i].k == k && g_sent[i].t) return 1;
     g_sent[g_sent_i].k = k; g_sent[g_sent_i].t = now; g_sent_i = (g_sent_i + 1) & 255;
     return 0;
 }
@@ -239,7 +244,7 @@ static int read_path(uint32_t ent, uint32_t *path, uint32_t *owner_type);
 static void cut_check(uint32_t m, uint32_t eid, uint32_t type, const uint32_t *target) {
     int cand = (type == T_CAGEANIM && (m == SG_START || m == SG_START_CUT)) || (type == T_PLAYANIM && m == SG_APPLY_START) ||
                (type == T_CAMRESOURCE && m == SG_ACTIVATE_CAM) || (type == T_MOVIE && m == SG_TRIGGER) || (type == T_STEALCAM && m == SG_START);
-    if (!cand || !g_cut_cb || replay_active()) return;
+    if (!cand || !g_cut_cb || replay_active() || settling()) return;
     DWORD now = GetTickCount();
     if (g_cut_t && now - g_cut_t < CUT_GAP_MS) return;   /* one per scene */
     uint32_t path[6], owner = 0;
@@ -256,7 +261,7 @@ void ws_on_call(const uint32_t *msg, const uint32_t *target) {
     if (!msg || !target) return;
     uint32_t m = msg[0], eid = target[3], type = target[4];
     cut_check(m, eid, type, target);
-    if (!g_on || g_paused) return;
+    if (!g_on || g_paused || settling()) return;
     for (int r = 0; r < NRULES; r++) {
         const Rule *R = &RULES[r];
         if (m != R->when.method || (R->when.eid && eid != R->when.eid) || type != R->when.type) continue;

@@ -673,7 +673,8 @@ static void net_recv(void) {
         }
         PresencePkt k = u.p;
         EnterCriticalSection(&g_cs);
-        if (!g_peer.valid || (int32_t)(k.seq - g_peer.seq) > 0) {
+        /* newer than the last, or the partner went quiet (a restarted game counts from 0 again: found in game) */
+        if (!g_peer.valid || (int32_t)(k.seq - g_peer.seq) > 0 || GetTickCount() - g_peer.t_ms > 2000) {
             memcpy(g_peer.p, k.pos, 12); memcpy(g_peer.q, k.quat, 16);
             memcpy(g_peer.name, k.name, 16); g_peer.name[15] = 0;
             g_peer.seq = k.seq; g_peer.t_ms = GetTickCount(); g_peer.valid = (k.flags & 1) ? 2 : 1;
@@ -952,6 +953,12 @@ static DWORD WINAPI net_thread(LPVOID p) {
             static DWORD last_chars;
             int in_lvl = c.ok && (c.p[0] != 0.f || c.p[1] != 0.f || c.p[2] != 0.f);
             if (in_lvl && now - last_chars >= 33) { read_chars(); last_chars = now; }   /* 30 Hz: the alien position drives the joiner's alien */
+            {   /* a level (or a checkpoint) just started: its start-up scripts run in both games, don't send them */
+                static int was_in;
+                if (!in_lvl) ws_settle(15000);   /* menus and loading: the level's start-up scripts run before the camera exists */
+                else if (!was_in) logf_("worldsync: level started, not sending for 15 s");
+                was_in = in_lvl;
+            }
             {   /* builds, every 3 s */
                 static DWORD last_build;
                 if (now - last_build >= 3000) { BuildPkt k; proto_fill_build(&k, g_mod_hash, g_game_build); net_raw(&k, sizeof k); last_build = now; }

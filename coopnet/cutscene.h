@@ -10,15 +10,21 @@
 #include <string.h>
 #include <math.h>
 
-#define CUT_TRAIL       64        /* ~2 s at 30 Hz */
+#define CUT_TRAIL       64        /* points at least CUT_STEP_M apart: the last ~20+ m walked */
 #define CUT_BACK_M      1.0f      /* land this far behind the partner */
-#define CUT_TRAIL_MS    3000
+#define CUT_TRAIL_MS    60000     /* older points aren't used */
+#define CUT_STEP_M      0.3f      /* a new point only after moving this far (standing still keeps the old ones) */
 #define CUT_NEAR_M      3.0f      /* already this close: don't move */
 #define CUT_BOTH_MS     2000      /* both started one within this: the joiner goes to the host */
 
 typedef struct { uint32_t t[CUT_TRAIL]; float p[CUT_TRAIL][3]; int n, head; } CutTrail;
 
 static inline void cut_trail_push(CutTrail *tr, uint32_t t, const float p[3]) {
+    if (tr->n) {   /* standing still: keep the points behind us (in game a still partner made us land inside them) */
+        const float *last = tr->p[(tr->head + CUT_TRAIL - 1) % CUT_TRAIL];
+        float dx = p[0] - last[0], dy = p[1] - last[1], dz = p[2] - last[2];
+        if (dx * dx + dy * dy + dz * dz < CUT_STEP_M * CUT_STEP_M) { tr->t[(tr->head + CUT_TRAIL - 1) % CUT_TRAIL] = t; return; }
+    }
     tr->t[tr->head] = t; memcpy(tr->p[tr->head], p, 12);
     tr->head = (tr->head + 1) % CUT_TRAIL;
     if (tr->n < CUT_TRAIL) tr->n++;

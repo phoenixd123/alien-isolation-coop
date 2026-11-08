@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     buf = malloc((size_t)W * H * 4);
     LbPlayer me = player("Ripley", "TAYLOR", 0xAAAA, 0);
     LbView v; memset(&v, 0, sizeof v);
-    v.version = "V0.3.0  BUILD 1A2B3C4D"; v.me_main = &me;
+    v.version = "V0.3.1  BUILD 1A2B3C4D"; v.me_main = &me;
 
     /* main, nothing found yet, typing a name */
     v.now = 1200; v.screen = LS_MAIN; v.name = "Ripley"; v.ip_text = ""; v.focus = LH_NAME; v.skin = "TAYLOR";

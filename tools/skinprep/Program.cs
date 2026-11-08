@@ -30,7 +30,7 @@ static class P
         string? Opt(string k) { var i = Array.IndexOf(a, k); return i >= 0 && i + 1 < a.Length ? a[i + 1] : null; }
         var skins = (Opt("--skins")?.Split(',') ?? DefaultSkins).Select(s => s.Trim().ToUpperInvariant()).ToArray();
         var only = Opt("--levels")?.Split(',').Select(s => s.Trim().ToUpperInvariant()).ToHashSet();
-        bool dry = a.Contains("--dry"), restore = a.Contains("--restore");
+        bool dry = a.Contains("--dry"), restore = a.Contains("--restore"), roundtrip = a.Contains("--roundtrip");   // roundtrip: load and save, add nothing (diagnosis)
         if (System.Diagnostics.Process.GetProcessesByName("AI").Length > 0) { Console.WriteLine("Close the game first."); return 2; }
 
         var env = Path.Combine(game, "DATA", "ENV");
@@ -64,7 +64,8 @@ static class P
                     .GroupBy(t => t.k).ToDictionary(g => g.Key, g => g.First().v);
                 var missing = skins.Where(s => sourceOf.ContainsKey(s) && !Has(dest.Commands, "DisplayModel:" + s)).ToList();
                 var present = skins.Where(x => Has(dest.Commands, "DisplayModel:" + x)).ToList();
-                if (missing.Count == 0) { Console.WriteLine($"{name}: has every skin"); have[name] = present; continue; }
+                if (missing.Count == 0 && !roundtrip) { Console.WriteLine($"{name}: has every skin"); have[name] = present; continue; }
+                if (roundtrip) missing.Clear();
                 if (dry) { Console.WriteLine($"{name}: would add {string.Join(", ", missing)}"); continue; }
                 foreach (var s in missing)
                 {

@@ -65,6 +65,39 @@ same IDs the mod uses, so the rule can fire there. 2026-11-06:
 The two LV426 levels have no `Door_Package` or `Door_Mechanism` doors (the derelict uses its own), so door and lock
 sync doesn't reach them. The Survivor map has no story mission composites, as expected.
 
+## In game, 2026-11-08 (v0.3.1)
+
+Two copies on one PC (Steam build 4940658), bot-driven, host p1 and joiner p2 over UDP on localhost.
+
+- **Level files from `-Skins` crash the game.** With skinprep's changed levels, Continue Game quit while loading
+  (also without coopnet.dll, so not the mod's code). Narrowed down on HAB_AIRPORT: a CathodeLib load-and-save
+  with nothing added already breaks it; with every round-tripped file except `LEVEL_MODELS.PAK` and
+  `MODELS_LEVEL.BIN` (which come back 87 KB and 178 KB smaller) it loads. Same with CathodeLib staging c3efa4ea.
+  `-Skins` is off; the installer restores levels changed by older versions. Checked: simulated a v0.3.0 `-Skins`
+  install on two levels, installed v0.3.1 over it, 32 files restored, the game loaded the airport.
+- **New player teleport (engine.c, the way OpenCAGE does it):** F7 regroup moved the joiner 9.3 m to the host,
+  then (after the trail fix) 4.4 m to a spot 1.4 m behind the host. The game kept running. Before the fix, a host
+  standing still made the joiner land inside them (the host got pushed 1.5 m).
+- **Skins in a level that has the character:** airport, both games spawned the partner as AXEL (the picked
+  SAMUELS / TAYLOR aren't in that level) and kept the body on the partner (checked on screen with the marker).
+- **Start-up noise:** both games sent ~40 world events while a level loaded (start-up scripts of doors and
+  terminals). Fixed: nothing is sent while not in a level and for 15 s after. A fired one-time step that keeps
+  being triggered was re-sent every 30 s; now once per level session. Lookups that fail (part of the level not
+  loaded) were retried at ~0.9 s of memory scanning each; now skipped for 20 s.
+- **Reconnect bug:** after the joiner restarted, the host never saw them again (a restarted game counts its
+  packets from 0). Fixed: a partner quiet for 2 s is taken fresh.
+- **Lobby, end to end:** host lobby and joiner lobby on one PC; join by address 127.0.0.1 (on one PC the host's
+  own listener takes the broadcast, as expected); "different saves" shown, Copy host's save copied and backed up
+  (`coop_saves\backup\p2-...`), then "same save"; Ready, Start; both AI.exe started within 45 ms; names and roles
+  from the lobby; connected.
+- **New game from the start:** both games started a new campaign (Medium), played the opening and loaded into the
+  Torrens side by side, connected; 8 world events each way during the opening. The bot can't play the mission
+  past that point.
+- **Survivor Mode (DLC_CHALLENGEMAP16):** both loaded and connected; no skin model in that level; the alien hadn't
+  come out after 2 minutes without playing the objectives, so the shared alien wasn't exercised.
+- Not exercised in game yet: a cutscene starting the partner move, level changes, the shared alien, the build
+  check with two builds, internet play over Steam with two accounts.
+
 ## In game
 
 Couch seats and death rules in game (2026-11-04, two copies on one PC at the main menu, started the way
