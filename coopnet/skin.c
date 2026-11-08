@@ -288,7 +288,8 @@ void skin_set_target(int ok, const float feet[3]) {
 }
 int skin_active(void) { return g_active != 0; }
 
-/* Teleport the local player (cutscene.h), on the game thread. The player is the active registry entry with tag 0
+/* (Superseded by engine.c, which moves the player the way OpenCAGE does; kept for reference, unused.)
+   Teleport the local player (cutscene.h), on the game thread. The player is the active registry entry with tag 0
    that is near the camera (`cam`), so a stray entry can't be moved by mistake. Needs no hooks: only the
    TeleportCharacter address, checked against its bytes first. */
 int skin_teleport_player(const float pos[3], const float cam[3]) {

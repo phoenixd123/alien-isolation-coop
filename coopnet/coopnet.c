@@ -29,6 +29,7 @@
 #include "skins.h"
 #include "version.h"
 #include "cutscene.h"
+#include "engine.h"
 #include <stdlib.h>
 #include <dwmapi.h>
 
@@ -394,15 +395,23 @@ static uint32_t pe_build(const char *exe) {
     return h ? h : 1;
 }
 
-static void cut_teleport_tick(void) {   /* game thread */
+/* At full dark, hand the move to engine.c (it runs at the end of the frame's physics pass), then report it. */
+static void cut_teleport_tick(void) {
+    static uint32_t ticket; static int kind; static float at[3];
+    if (ticket) {
+        int r = engine_result(ticket);
+        if (r == ENG_PENDING) return;
+        logf_("%s: %s (%.1f %.1f %.1f)", kind ? "regroup" : "cutscene",
+              r == ENG_DONE ? "moved to the partner" : r == ENG_DEAD ? "not moved (we're dead)" : r == ENG_NO_BODY ? "not moved (no physics body just now)" : "not moved (no player)",
+              at[0], at[1], at[2]);
+        if (r == ENG_DONE) { if (kind) g_ui_regroup_t = GetTickCount(); else g_ui_cut_t = GetTickCount(); }
+        ticket = 0;
+    }
     if (!g_tp_pending || (int32_t)(GetTickCount() - g_tp_at) < 0) return;
     InterlockedExchange(&g_tp_pending, 0);
-    Cam me; read_cam(&me);
-    float pos[3]; EnterCriticalSection(&g_cs); memcpy(pos, g_tp_pos, 12); LeaveCriticalSection(&g_cs);
-    int r = me.ok ? skin_teleport_player(pos, me.p) : 0;
-    logf_("%s: %s (%.1f %.1f %.1f)", g_tp_kind ? "regroup" : "cutscene",
-          r == 1 ? "moved to the partner" : r < 0 ? "can't move the player on this build" : "player not found, not moved", pos[0], pos[1], pos[2]);
-    if (r == 1) { if (g_tp_kind) g_ui_regroup_t = GetTickCount(); else g_ui_cut_t = GetTickCount(); }
+    EnterCriticalSection(&g_cs); memcpy(at, g_tp_pos, 12); kind = g_tp_kind; LeaveCriticalSection(&g_cs);
+    ticket = engine_teleport(at);
+    if (!ticket) logf_("%s: can't move the player on this build", kind ? "regroup" : "cutscene");
 }
 static void game_tick_cb(void) { follow_write(); menu_tick(); cut_teleport_tick(); }
 static void on_cutscene(void) { if (g_cut_on) InterlockedExchange(&g_cut_local, 1); }   /* game thread */
@@ -1047,6 +1056,7 @@ static void init(HMODULE self) {
     g_nofade = !(GetEnvironmentVariableA("AIC_DEATH_NOFADE", b, sizeof b) && b[0] == '0');   /* no fade to black while spectating */
     g_hold_menu = !(GetEnvironmentVariableA("AIC_HOLD_MENU", b, sizeof b) && b[0] == '0');
     g_cut_on = !(GetEnvironmentVariableA("AIC_CUTSCENE_TP", b, sizeof b) && b[0] == '0');
+    engine_install(logf_);   /* player teleport for cutscenes and F7 (method from OpenCAGE) */
     {   /* our builds, for BuildPkt */
         char pth[MAX_PATH];
         snprintf(pth, sizeof pth, "%s\\coopnet.dll", dir); g_mod_hash = file_fnv(pth);

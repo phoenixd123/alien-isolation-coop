@@ -256,6 +256,9 @@ second copy). Logs go to `coop_logs\`.
 
 ## Credits
 
+- [OpenCAGE](https://github.com/MattFiler/OpenCAGE) by Matt Filer (MIT): the way coopnet moves the player for
+  cutscenes and F7 (`coopnet/engine.c`) follows OpenCAGE's runtime tools, which also confirmed the engine addresses
+  the mod uses.
 - [CathodeLib](https://github.com/OpenCAGE/CathodeLib) by Matt Filer, used by `levelmod` and `skinprep` to read and
   patch level files. `skinprep` in the zip also ships K4os.Compression.LZ4 and K4os.Hash.xxHash (MIT) and
   xxHash.NET (BSD); their licenses are in `third_party/licenses/`.

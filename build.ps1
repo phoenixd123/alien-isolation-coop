@@ -21,7 +21,7 @@ try { & .\harness.exe; $rc = $LASTEXITCODE } finally { Pop-Location }
 if ($rc) { throw "steamwrap offline test failed" }
 
 # --- coopnet + its tests (wire protocol over real UDP, projection math)
-Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" "$root\coopnet\replay.c" "$root\coopnet\worldsync.c" "$root\coopnet\life.c" "$root\coopnet\sfx.c" "$root\coopnet\ui.c" "$root\coopnet\skin.c" -lws2_32 -lgdi32 -luser32 -lwinmm -ldwmapi -lgdiplus
+Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" "$root\coopnet\replay.c" "$root\coopnet\worldsync.c" "$root\coopnet\life.c" "$root\coopnet\sfx.c" "$root\coopnet\ui.c" "$root\coopnet\skin.c" "$root\coopnet\engine.c" -lws2_32 -lgdi32 -luser32 -lwinmm -ldwmapi -lgdiplus
 # overlay screens rendered offscreen (check the images in build\ui\)
 New-Item -ItemType Directory -Force "$out\ui" | Out-Null
 Z -O2 -Wall -Wextra -o "$out\ui_preview.exe" "$root\coopnet\test\ui_preview.c" "$root\coopnet\ui.c" -lgdiplus -lgdi32
