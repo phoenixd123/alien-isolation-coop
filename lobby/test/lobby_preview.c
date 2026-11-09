@@ -57,9 +57,10 @@ int main(int argc, char **argv) {
     v.toast = NULL; v.focus = 0;
 
     /* internet tab: Steam running, a friend's ID typed in */
-    v.tab = 1; v.my_steam = 76561198012345678ull; v.friend_text = "76561198087654321"; v.friend_ok = 1; v.focus = LH_STEAMID; v.hover = LH_STEAM_JOIN;
+    static const LbsFriend fr[3] = {{76561198087654321ull, 109775241000000001ull, "Dropper", 1, 1}, {76561198000000002ull, 0, "Amanda", 1, 0}, {76561198000000003ull, 0, "Ripley", 1, 0}};
+    v.tab = 1; v.my_steam = 76561198012345678ull; v.steam_up = 1; v.friends = fr; v.nfriends = 3; v.focus = 0; v.hover = LH_FRIEND;
     shot("2b_internet", &v);
-    v.my_steam = 0; v.friend_text = "7656"; v.friend_ok = 0; v.focus = 0; v.hover = 0;
+    v.my_steam = 0; v.steam_up = 0; v.friends = NULL; v.nfriends = 0; v.focus = 0; v.hover = 0;
     shot("2c_internet_no_steam", &v);
     v.tab = 0;
 
@@ -68,6 +69,10 @@ int main(int argc, char **argv) {
     L.role = LB_HOSTING; L.me = player("Ripley", "TAYLOR", 0xAAAA, 1);
     v.screen = LS_LOBBY; v.L = &L; lstrcpynA(v.my_ip, "192.168.1.10", sizeof v.my_ip); v.now = 2100;
     shot("4_host_waiting", &v);
+    v.via_steam = 1; v.friends = fr; v.nfriends = 3; { static const uint64_t inv[1] = {76561198000000002ull}; v.invited = inv; v.ninvited = 1; }
+    lstrcpynA(v.my_ip, "STEAM", sizeof v.my_ip); v.hover = LH_INVITE;
+    shot("4b_steam_lobby_invite", &v);
+    v.via_steam = 0; v.friends = NULL; v.nfriends = 0; v.invited = NULL; v.ninvited = 0; v.hover = 0; lstrcpynA(v.my_ip, "192.168.1.10", sizeof v.my_ip);
 
     /* partner in, not ready, different save */
     L.have_peer = 1; L.peer = player("Sam", "SAMUELS", 0xBBBB, 0); lstrcpynA(v.peer_ip, "192.168.1.23", sizeof v.peer_ip);

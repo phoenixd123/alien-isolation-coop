@@ -214,25 +214,48 @@ static void screen_main(Ui *u, const LbView *v) {
     }
     float rtop = top + 40 * s;   /* below the tabs */
     if (v->tab) {
-        section(c, rx + 20 * s, rtop + 18 * s, "PLAY OVER STEAM", NULL);
-        text(c, "NO ADDRESSES, NO PORT FORWARDING. YOU EACH NEED YOUR OWN STEAM ACCOUNT.", rx + 20 * s, rtop + 44 * s, 11 * s, DIM, 0, 1 * s, LEFT, 0);
-        float y2 = rtop + 76 * s;
-        text(c, "YOUR STEAM ID", rx + 20 * s, y2, 11 * s, GREEN_LO, 1, 3 * s, LEFT, 0);
-        char sid[32];
-        if (v->my_steam) snprintf(sid, sizeof sid, "%llu", (unsigned long long)v->my_steam); else snprintf(sid, sizeof sid, "START STEAM FIRST");
-        text(c, sid, rx + 20 * s, y2 + 20 * s, 24 * s, v->my_steam ? INK : AMBER, 1, 3 * s, LEFT, 1);
-        button(u, LH_COPY_ID, rx + rw - 20 * s - 120 * s, y2 + 14 * s, 120 * s, 40 * s, "COPY", B_NORMAL, v->my_steam != 0);
-        float y3 = y2 + 82 * s;
-        line(c, with_a(GREEN, 50), 1, rx + 20 * s, y3 - 14 * s, rx + rw - 20 * s, y3 - 14 * s);
-        button(u, LH_STEAM_HOST, rx + 20 * s, y3, rw - 40 * s, 52 * s, "HOST OVER STEAM", B_PRIMARY, v->my_steam != 0);
-        text(c, "SEND YOUR FRIEND YOUR STEAM ID. THE GAME OPENS AND WAITS FOR THEM.", rx + rw / 2, y3 + 62 * s, 10 * s, GREEN_LO, 0, 1 * s, CENTER, 0);
-        float y4 = y3 + 104 * s;
-        line(c, with_a(GREEN, 50), 1, rx + 20 * s, y4 - 14 * s, rx + rw - 20 * s, y4 - 14 * s);
-        float jbw = 170 * s;
-        field(u, LH_STEAMID, rx + 20 * s, y4, rw - 40 * s - jbw - 12 * s, "YOUR FRIEND'S STEAM ID", v->friend_text, "76561198...", v->focus == LH_STEAMID);
-        button(u, LH_STEAM_JOIN, rx + rw - 20 * s - jbw, y4 + 18 * s, jbw, 40 * s, "JOIN", v->friend_ok ? B_PRIMARY : B_NORMAL, v->friend_ok && v->my_steam != 0);
-        text(c, "LOAD THE SAME SAVE. THE GAME CHECKS YOUR BUILDS WHEN YOU CONNECT.", rx + 20 * s, top + ph - 26 * s, 10 * s, DIM, 0, 1 * s, LEFT, 0);
-        footer(c, v, "STEAM MUST BE RUNNING ON BOTH PCS.");
+        section(c, rx + 20 * s, rtop + 18 * s, "STEAM LOBBIES", NULL);
+        text(c, "FRIENDS ONLY. NO ADDRESSES, NO PORT FORWARDING.", rx + 20 * s, rtop + 44 * s, 11 * s, DIM, 0, 1 * s, LEFT, 0);
+        float y3 = rtop + 70 * s;
+        button(u, LH_STEAM_HOST, rx + 20 * s, y3, rw - 40 * s, 52 * s, v->steam_busy ? "CONNECTING TO STEAM..." : "HOST A STEAM LOBBY", B_PRIMARY,
+               v->steam_up && !v->steam_busy);
+        float ly = y3 + 76 * s;
+        int hosting = 0; for (int i = 0; i < v->nfriends; i++) hosting += v->friends[i].hosting;
+        char cnt[32]; snprintf(cnt, sizeof cnt, hosting == 1 ? "1 HOSTING" : "%d HOSTING", hosting);
+        section(c, rx + 20 * s, ly, "FRIENDS ONLINE", NULL);
+        text(c, cnt, rx + rw - 20 * s, ly + 2 * s, 11 * s, GREEN_LO, 1, 2 * s, RIGHT, 0);
+        float fy = ly + 30 * s, rowh = 44 * s, listh = top + ph - 70 * s - fy;
+        if (!v->steam_up) {
+            text(c, "STEAM ISN'T RUNNING", rx + rw / 2, fy + listh / 2 - 20 * s, 15 * s, AMBER, 1, 4 * s, CENTER, 1);
+            text(c, "START STEAM, THEN COME BACK TO THIS TAB", rx + rw / 2, fy + listh / 2 + 4 * s, 11 * s, DIM, 0, 2 * s, CENTER, 0);
+        } else if (!v->nfriends) {
+            text(c, "NO FRIENDS ONLINE", rx + rw / 2, fy + listh / 2 - 20 * s, 15 * s, GREEN, 1, 4 * s, CENTER, 1);
+            text(c, "A FRIEND WHO HOSTS SHOWS UP HERE WITH JOIN", rx + rw / 2, fy + listh / 2 + 4 * s, 11 * s, DIM, 0, 2 * s, CENTER, 0);
+        }
+        int maxrows = (int)(listh / rowh);
+        for (int i = 0; i < v->nfriends && i < maxrows; i++) {
+            const LbsFriend *f = &v->friends[i];
+            float y0 = fy + i * rowh, x0 = rx + 16 * s, w0 = rw - 32 * s, h0 = rowh - 6 * s;
+            int hot = u->hover == LH_FRIEND + i && f->hosting;
+            fill(c, hot ? with_a(GREEN, 26) : C(120, 2, 12, 8), x0, y0, w0, h0);
+            fill(c, f->hosting ? GREEN : with_a(GREEN, 70), x0, y0, 3 * s, h0);
+            char nm[32]; upper(nm, sizeof nm, f->name);
+            text(c, nm, x0 + 16 * s, y0 + 5 * s, 15 * s, f->hosting ? INK : DIM, 1, 2 * s, LEFT, hot);
+            text(c, f->hosting ? "HOSTING CO-OP" : "ONLINE", x0 + 16 * s, y0 + 23 * s, 10 * s, f->hosting ? GREEN_LO : DIM, 0, 2 * s, LEFT, 0);
+            if (f->hosting) {
+                float jw = 86 * s, tx = x0 + w0 - 12 * s, ty = y0 + (h0 - 28 * s) / 2;
+                fill(c, hot ? GREEN : with_a(GREEN, 40), tx - jw, ty, jw, 28 * s);
+                text(c, "JOIN", tx - jw / 2, ty + 6 * s, 13 * s, hot ? C(255, 4, 16, 10) : GREEN, 1, 4 * s, CENTER, 0);
+                add_hit(u, LH_FRIEND + i, x0, y0, w0, h0);
+            }
+        }
+        float by = top + ph - 56 * s;
+        line(c, with_a(GREEN, 50), 1, rx + 20 * s, by - 10 * s, rx + rw - 20 * s, by - 10 * s);
+        char sid[48];
+        if (v->my_steam) snprintf(sid, sizeof sid, "YOUR STEAM ID %llu", (unsigned long long)v->my_steam); else snprintf(sid, sizeof sid, "NO STEAM ID: START STEAM");
+        text(c, sid, rx + 20 * s, by + 6 * s, 11 * s, v->my_steam ? GREEN_LO : AMBER, 1, 2 * s, LEFT, 0);
+        button(u, LH_COPY_ID, rx + rw - 20 * s - 96 * s, by, 96 * s, 30 * s, "COPY", B_NORMAL, v->my_steam != 0);
+        footer(c, v, "INVITE FROM THE LOBBY, OR YOUR FRIEND PICKS YOU HERE. STEAM ON BOTH PCS.");
         return;
     }
     char cnt[32]; snprintf(cnt, sizeof cnt, v->nfound == 1 ? "1 GAME" : "%d GAMES", v->nfound);
@@ -330,7 +353,7 @@ static void screen_lobby(Ui *u, const LbView *v) {
     snprintf(hd, sizeof hd, "LOBBY // HOSTED BY %s", hn[0] ? hn : "PLAYER");
     section(c, 24 * s, top, hd, NULL);
     if (host && v->my_ip[0]) {
-        char a[64]; snprintf(a, sizeof a, "YOUR ADDRESS %s", v->my_ip);
+        char a[64]; snprintf(a, sizeof a, v->via_steam ? "OVER STEAM" : "YOUR ADDRESS %s", v->my_ip);
         text(c, a, W - 24 * s, top + 2 * s, 12 * s, GREEN_LO, 1, 2 * s, RIGHT, 0);
     }
 
@@ -338,6 +361,23 @@ static void screen_lobby(Ui *u, const LbView *v) {
     const LbPlayer *hp = host ? &L->me : &L->peer, *gp = host ? &L->peer : &L->me;
     player_card(u, v, 24 * s, cy, cw, ch, "HOST", hp, host ? v->my_ip : v->peer_ip, host || peer, !host && !peer, host);
     player_card(u, v, 24 * s + cw + 20 * s, cy, cw, ch, "PARTNER", gp, host ? v->peer_ip : NULL, !host || peer, 0, !host);
+    if (host && !peer && v->via_steam) {   /* Steam lobby with a free seat: invite a friend from here */
+        float x = 24 * s + cw + 20 * s, iy = cy + 40 * s, rowh = 34 * s;
+        fill(c, C(255, 2, 10, 7), x + 2 * s, iy - 4 * s, cw - 4 * s, ch - 42 * s);
+        text(c, v->nfriends ? "INVITE A FRIEND" : "NO FRIENDS ONLINE TO INVITE", x + 20 * s, iy, 11 * s, GREEN_LO, 1, 3 * s, LEFT, 0);
+        int maxrows = (int)((ch - 76 * s) / rowh);
+        for (int i = 0; i < v->nfriends && i < maxrows; i++) {
+            const LbsFriend *f = &v->friends[i];
+            int sent = 0; for (int k = 0; k < v->ninvited; k++) sent |= v->invited[k] == f->id;
+            float y0 = iy + 22 * s + i * rowh, x0 = x + 16 * s, w0 = cw - 32 * s, h0 = rowh - 6 * s;
+            int hot = u->hover == LH_INVITE + i;
+            fill(c, hot ? with_a(GREEN, 26) : C(120, 2, 12, 8), x0, y0, w0, h0);
+            char nm[32]; upper(nm, sizeof nm, f->name);
+            text(c, nm, x0 + 12 * s, y0 + 6 * s, 13 * s, INK, 1, 2 * s, LEFT, hot);
+            text(c, sent ? "INVITED" : "INVITE", x0 + w0 - 12 * s, y0 + 7 * s, 11 * s, sent ? GREEN_LO : GREEN, 1, 3 * s, RIGHT, 0);
+            add_hit(u, LH_INVITE + i, x0, y0, w0, h0);
+        }
+    }
 
     /* checks */
     float ky = cy + ch + 18 * s, kh = 128 * s, kw = W - 48 * s;

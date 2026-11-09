@@ -211,34 +211,43 @@ static int recv_all(SOCKET s, void *p, int n) {
     return 1;
 }
 
+static int sock_send(LbStream *st, const void *p, int n) { return send_all((SOCKET)(uintptr_t)st->ctx, p, n); }
+static int sock_recv(LbStream *st, void *p, int n) { return recv_all((SOCKET)(uintptr_t)st->ctx, p, n); }
+
 typedef struct { SOCKET ls; char folder[MAX_PATH]; uint32_t lobby; } Server;
 static Server g_srv;
 static HANDLE g_srv_thread;
 
-static void serve_one(SOCKET c) {
-    DWORD to = 15000; setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof to); setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, (const char *)&to, sizeof to);
+/* The save copy's stream (TCP on the LAN, Steam P2P online): request {magic, lobby}; reply: file count, then per
+   file a 32-byte name, its size and its bytes. */
+void lbnet_serve_stream(LbStream *st, const char *folder, uint32_t lobby) {
     uint32_t req[2];
-    if (!recv_all(c, req, sizeof req) || req[0] != SAVE_MAGIC || req[1] != g_srv.lobby) return;
-    Name f[SAVE_MAXF]; int n = list_saves(g_srv.folder, f, SAVE_MAXF);
+    if (!st->recv(st, req, sizeof req) || req[0] != SAVE_MAGIC || req[1] != lobby) return;
+    Name f[SAVE_MAXF]; int n = list_saves(folder, f, SAVE_MAXF);
     uint32_t cnt = (uint32_t)n;
-    if (!send_all(c, &cnt, 4)) return;
+    if (!st->send(st, &cnt, 4)) return;
     static char buf[1 << 16];
     for (int i = 0; i < n; i++) {
-        char p[MAX_PATH]; snprintf(p, sizeof p, "%s\\%s", g_srv.folder, f[i].name);
+        char p[MAX_PATH]; snprintf(p, sizeof p, "%s\\%s", folder, f[i].name);
         FILE *fp = fopen(p, "rb");
         uint32_t size = 0;
         if (fp) { fseek(fp, 0, SEEK_END); long L = ftell(fp); fseek(fp, 0, SEEK_SET); size = L > 0 && (uint32_t)L <= SAVE_MAXSZ ? (uint32_t)L : 0; }
         char nm[32] = {0}; lstrcpynA(nm, f[i].name, 32);
-        if (!send_all(c, nm, 32) || !send_all(c, &size, 4)) { if (fp) fclose(fp); return; }
+        if (!st->send(st, nm, 32) || !st->send(st, &size, 4)) { if (fp) fclose(fp); return; }
         uint32_t left = size;
         while (left) {
             size_t want = left < sizeof buf ? left : sizeof buf, r = fp ? fread(buf, 1, want, fp) : 0;
             if (r == 0) { memset(buf, 0, want); r = want; }   /* file shrank: keep the stream consistent */
-            if (!send_all(c, buf, (int)r)) { fclose(fp); return; }
+            if (!st->send(st, buf, (int)r)) { if (fp) fclose(fp); return; }
             left -= (uint32_t)r;
         }
         if (fp) fclose(fp);
     }
+}
+static void serve_one(SOCKET c) {
+    DWORD to = 15000; setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof to); setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, (const char *)&to, sizeof to);
+    LbStream st = {sock_send, sock_recv, (void *)(uintptr_t)c};
+    lbnet_serve_stream(&st, g_srv.folder, g_srv.lobby);
 }
 static DWORD WINAPI serve_thread(LPVOID u) {
     (void)u;
@@ -270,33 +279,29 @@ typedef struct { LbAddr host; uint32_t lobby; char folder[MAX_PATH], backup[MAX_
 
 static void fail(LbCopy *c, const char *m) { lstrcpynA(c->msg, m, sizeof c->msg); c->state = LBC_FAILED; }
 
-static DWORD WINAPI fetch_thread(LPVOID u) {
-    Fetch *F = (Fetch *)u; LbCopy *c = F->c;
-    char inc[MAX_PATH]; snprintf(inc, sizeof inc, "%s.incoming", F->folder);
-    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    struct sockaddr_in a = {0}; a.sin_family = AF_INET; a.sin_port = htons(F->host.port); a.sin_addr.s_addr = htonl(F->host.ip);
-    DWORD to = 15000; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof to);
-    if (s == INVALID_SOCKET || connect(s, (struct sockaddr *)&a, sizeof a) != 0) { fail(c, "COULD NOT REACH THE HOST"); goto out; }
-    uint32_t req[2] = {SAVE_MAGIC, F->lobby}, cnt = 0;
-    if (!send_all(s, req, sizeof req) || !recv_all(s, &cnt, 4)) { fail(c, "THE HOST DID NOT ANSWER"); goto out; }
-    if (cnt == 0) { fail(c, "THE HOST HAS NO CO-OP SAVE YET"); goto out; }
-    if (cnt > SAVE_MAXF) { fail(c, "BAD REPLY FROM THE HOST"); goto out; }
+/* Joiner: fetch over a stream, back up what's there, move the new files in. Sets c->state. */
+void lbnet_fetch_stream(LbStream *st, uint32_t lobby, const char *folder, const char *backup, LbCopy *c) {
+    char inc[MAX_PATH]; snprintf(inc, sizeof inc, "%s.incoming", folder);
+    uint32_t req[2] = {SAVE_MAGIC, lobby}, cnt = 0;
+    if (!st->send(st, req, sizeof req) || !st->recv(st, &cnt, 4)) { fail(c, "THE HOST DID NOT ANSWER"); return; }
+    if (cnt == 0) { fail(c, "THE HOST HAS NO CO-OP SAVE YET"); return; }
+    if (cnt > SAVE_MAXF) { fail(c, "BAD REPLY FROM THE HOST"); return; }
     c->files = (int)cnt;
     CreateDirectoryA(inc, NULL);
     char names[SAVE_MAXF][32];
     static char buf[1 << 16];
     for (uint32_t i = 0; i < cnt; i++) {
         uint32_t size;
-        if (!recv_all(s, names[i], 32) || !recv_all(s, &size, 4)) { fail(c, "COPY INTERRUPTED"); goto out; }
+        if (!st->recv(st, names[i], 32) || !st->recv(st, &size, 4)) { fail(c, "COPY INTERRUPTED"); return; }
         names[i][31] = 0;
-        if (!lb_save_name_ok(names[i]) || size > SAVE_MAXSZ) { fail(c, "BAD FILE FROM THE HOST"); goto out; }
+        if (!lb_save_name_ok(names[i]) || size > SAVE_MAXSZ) { fail(c, "BAD FILE FROM THE HOST"); return; }
         char p[MAX_PATH]; snprintf(p, sizeof p, "%s\\%s", inc, names[i]);
         FILE *fp = fopen(p, "wb");
-        if (!fp) { fail(c, "COULD NOT WRITE THE SAVE"); goto out; }
+        if (!fp) { fail(c, "COULD NOT WRITE THE SAVE"); return; }
         c->total += size;
         while (size) {
             int want = size < sizeof buf ? (int)size : (int)sizeof buf;
-            if (!recv_all(s, buf, want)) { fclose(fp); fail(c, "COPY INTERRUPTED"); goto out; }
+            if (!st->recv(st, buf, want)) { fclose(fp); fail(c, "COPY INTERRUPTED"); return; }
             fwrite(buf, 1, (size_t)want, fp); size -= (uint32_t)want; c->bytes += (uint32_t)want;
         }
         fclose(fp); c->done_files = (int)i + 1;
@@ -304,29 +309,37 @@ static DWORD WINAPI fetch_thread(LPVOID u) {
     /* back up what's there, then move the new files in */
     {
         SYSTEMTIME t; GetLocalTime(&t);
-        const char *prof = strrchr(F->folder, 92); prof = prof ? prof + 1 : F->folder;
-        char bk[MAX_PATH]; CreateDirectoryA(F->backup, NULL);
-        snprintf(bk, sizeof bk, "%s\\%s-%04d%02d%02d-%02d%02d%02d", F->backup, prof, t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-        Name old[SAVE_MAXF]; int no = list_saves(F->folder, old, SAVE_MAXF);
+        const char *prof = strrchr(folder, 92); prof = prof ? prof + 1 : folder;
+        char bk[MAX_PATH]; CreateDirectoryA(backup, NULL);
+        snprintf(bk, sizeof bk, "%s\\%s-%04d%02d%02d-%02d%02d%02d", backup, prof, t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+        Name old[SAVE_MAXF]; int no = list_saves(folder, old, SAVE_MAXF);
         if (no) {
-            if (!CreateDirectoryA(bk, NULL)) { fail(c, "COULD NOT BACK UP YOUR SAVE"); goto out; }
+            if (!CreateDirectoryA(bk, NULL)) { fail(c, "COULD NOT BACK UP YOUR SAVE"); return; }
             for (int i = 0; i < no; i++) {
                 char from[MAX_PATH], to2[MAX_PATH];
-                snprintf(from, sizeof from, "%s\\%s", F->folder, old[i].name); snprintf(to2, sizeof to2, "%s\\%s", bk, old[i].name);
-                if (!MoveFileA(from, to2)) { fail(c, "COULD NOT BACK UP YOUR SAVE"); goto out; }
+                snprintf(from, sizeof from, "%s\\%s", folder, old[i].name); snprintf(to2, sizeof to2, "%s\\%s", bk, old[i].name);
+                if (!MoveFileA(from, to2)) { fail(c, "COULD NOT BACK UP YOUR SAVE"); return; }
             }
         }
-        CreateDirectoryA(F->folder, NULL);
+        CreateDirectoryA(folder, NULL);
         for (uint32_t i = 0; i < cnt; i++) {
             char from[MAX_PATH], to2[MAX_PATH];
-            snprintf(from, sizeof from, "%s\\%s", inc, names[i]); snprintf(to2, sizeof to2, "%s\\%s", F->folder, names[i]);
-            if (!MoveFileExA(from, to2, MOVEFILE_REPLACE_EXISTING)) { fail(c, "COULD NOT WRITE THE SAVE"); goto out; }
+            snprintf(from, sizeof from, "%s\\%s", inc, names[i]); snprintf(to2, sizeof to2, "%s\\%s", folder, names[i]);
+            if (!MoveFileExA(from, to2, MOVEFILE_REPLACE_EXISTING)) { fail(c, "COULD NOT WRITE THE SAVE"); return; }
         }
         RemoveDirectoryA(inc);
         snprintf(c->msg, sizeof c->msg, no ? "SAVE COPIED. YOURS IS BACKED UP" : "SAVE COPIED");
         c->state = LBC_DONE;
     }
-out:
+}
+
+static DWORD WINAPI fetch_thread(LPVOID u) {
+    Fetch *F = (Fetch *)u; LbCopy *c = F->c;
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    struct sockaddr_in a = {0}; a.sin_family = AF_INET; a.sin_port = htons(F->host.port); a.sin_addr.s_addr = htonl(F->host.ip);
+    DWORD to = 15000; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof to);
+    if (s == INVALID_SOCKET || connect(s, (struct sockaddr *)&a, sizeof a) != 0) fail(c, "COULD NOT REACH THE HOST");
+    else { LbStream st = {sock_send, sock_recv, (void *)(uintptr_t)s}; lbnet_fetch_stream(&st, F->lobby, F->folder, F->backup, c); }
     if (s != INVALID_SOCKET) closesocket(s);
     free(F);
     return 0;

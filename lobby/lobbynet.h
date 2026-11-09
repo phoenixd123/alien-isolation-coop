@@ -33,6 +33,10 @@ int  lbnet_serve_saves(LbNet *n, const char *folder, uint32_t lobby); /* host: s
 void lbnet_stop_saves(LbNet *n);
 typedef struct { volatile int state; volatile int files, done_files; volatile uint32_t bytes, total; char msg[96]; } LbCopy;
 enum { LBC_IDLE, LBC_RUNNING, LBC_DONE, LBC_FAILED };
+/* The copy over any byte stream (TCP here, Steam P2P in lobbysteam.c). send/recv: all n bytes or 0. */
+typedef struct LbStream { int (*send)(struct LbStream *, const void *, int); int (*recv)(struct LbStream *, void *, int); void *ctx; } LbStream;
+void lbnet_serve_stream(LbStream *st, const char *folder, uint32_t lobby);
+void lbnet_fetch_stream(LbStream *st, uint32_t lobby, const char *folder, const char *backup, LbCopy *c);
 /* joiner: copy from host into `folder`, backing up to `backup_root`. Runs on a thread; watch c->state. */
 int  lbnet_fetch_saves(LbAddr host, uint32_t lobby, const char *folder, const char *backup_root, LbCopy *c);
 int  lb_save_name_ok(const char *s);

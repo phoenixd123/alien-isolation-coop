@@ -42,7 +42,7 @@ if (Get-Command python -ErrorAction SilentlyContinue) { & python -I "$root\tools
 Z -O2 -Wall -Wextra -o "$out\hud_test.exe" "$root\coopnet\test\hud_test.c"
 & "$out\hud_test.exe"; if ($LASTEXITCODE) { throw "hud_test failed" }
 # lobby: launcher window, its screens rendered to images (build\lobby\), and the protocol/LAN test on loopback
-Z -O2 -Wall -Wextra "-Wl,--subsystem,windows" -o "$out\lobby.exe" "$root\lobby\lobby.c" "$root\lobby\lobbyui.c" "$root\lobby\lobbynet.c" -lgdiplus -lgdi32 -luser32 -lws2_32
+Z -O2 -Wall -Wextra "-Wl,--subsystem,windows" -o "$out\lobby.exe" "$root\lobby\lobby.c" "$root\lobby\lobbyui.c" "$root\lobby\lobbynet.c" "$root\lobby\lobbysteam.c" -lgdiplus -lgdi32 -luser32 -lws2_32
 New-Item -ItemType Directory -Force "$out\lobby" | Out-Null
 Z -O2 -Wall -Wextra -o "$out\lobby_preview.exe" "$root\lobby\test\lobby_preview.c" "$root\lobby\lobbyui.c" "$root\lobby\lobbynet.c" -lgdiplus -lgdi32 -lws2_32
 & "$out\lobby_preview.exe" "$out\lobby" | Out-Null; if ($LASTEXITCODE) { throw "lobby_preview failed" }
