@@ -5,7 +5,7 @@ What I ran, on what, and what came out. Most of my in-game tests use two copies 
 
 ## Offline suite
 
-`build.ps1` runs these on every build (no game needed). Last run 2026-11-06:
+`build.ps1` runs these on every build (no game needed). Last run 2026-11-09:
 
 ```
 steamwrap ABI test:   40 passed, 0 failed
@@ -13,15 +13,30 @@ protocol over UDP:    18 passed, 0 failed  (476/476 packets, loss and reorder si
 overlay projection:   10 passed, 0 failed  (cases taken from in-game measurements)
 death rules:          31 passed, 0 failed  (spectate, both down, disconnect, give up, early load, stale packets, solo)
 skins:                38 passed, 0 failed  (spawn request matches AI-MP's layout, level names, skin choice, packet)
-automatic sync:       52 passed, 0 failed  (generated table sorted and complete, known entities in/out, alien playback incl. vent jumps and
+automatic sync:       83 passed, 0 failed  (generated table sorted and complete, known entities in/out, alien playback incl. vent jumps and
                                             clock wrap; cutscene tables, landing spot, who moves, cutscene packet;
-                                            regroup, teleport fade, build check packet)
+                                            regroup, teleport fade, build check packet; the joiner's alien: walk,
+                                            stop, turn, snap, vents, full alien packet; carry-along: what counts as
+                                            a scripted move, who goes along, carry packet)
                       + gen_syncmap selftest (what counts as saved state, once-only, or a player's own)
 lobby:                62 passed, 0 failed  (state machine on a fake clock, then real UDP join/ready/start and TCP save copy on loopback;
-                                            Steam ID parsing)
+                                            Steam ID parsing; the save copy now runs on the stream code the Steam copy uses)
 motion tracker:       14 passed, 0 failed  (yaw, pitch ignored, motion window, teleports, ping rate)
 steam transport:      24 passed, 0 failed  (fake steam_api checks the MSVC argument layout both ways)
 ```
+
+## skinprep's model writer (files only, no game), 2026-11-09
+
+On the test copy's level files. `skinprep --roundtrip` loads a level and saves it with nothing added; `--check`
+adds the skins, writes the level to a staging folder, reads it back and checks it, then deletes it (nothing
+installed).
+
+- BSP_TORRENS round trip: `LEVEL_MODELS.PAK` and `MODELS_LEVEL.BIN` byte-identical to the originals (CathodeLib's
+  writer made them 87 KB and 178 KB smaller on HAB_AIRPORT), 0 records re-pointed.
+- BSP_TORRENS (+ AXEL, RICARDO, MARLOW) and HAB_AIRPORT (+ TAYLOR, SAMUELS, RICARDO, MARLOW): written and read
+  back; every added character's scripts resolve to models, materials, shaders and textures in the written level,
+  with the same mesh data as in its source level.
+- Not done yet: loading those levels in the game.
 
 ## Installer
 

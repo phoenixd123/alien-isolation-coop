@@ -27,7 +27,7 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Co-op saves kept apart from your normal Steam Cloud saves | works |
 | Achievements and stats blocked while modded | works (offline test) |
 | Partner marker (name, distance, arrow when off-screen) | works |
-| Internet play from the lobby: Internet tab, your Steam ID with a copy button, host or join by your friend's Steam ID | written and tested offline (Steam ID handling); not run between two Steam accounts yet |
+| Steam lobbies in the lobby window: host a friends-only lobby, friends who are hosting show up with Join, invite friends from the lobby, ready check and save copy over Steam | written; the screens rendered and the save copy's code tested offline (on the LAN). Not run with Steam yet |
 | Regroup: hold F7 to teleport to your partner (with a fade) | works in game (airport, two copies on one PC): lands about a metre behind your partner |
 | Build check in game: different mod or game builds turn world sync off and the overlay says why | written and tested offline, not tried with two different builds yet |
 | LAN lobby (`lobby.exe`): find each other on the network, ready up, both games start connected | works in game on one PC: host, join by address, save copy, ready, start; both games launched together and connected. Not run between two PCs yet |
@@ -37,19 +37,20 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Items your partner picks up vanish from your world | works |
 | Story steps your partner reaches run in your game | works for one tested step (M04 crowbar), not a whole mission |
 | Dying: you watch through your partner's eyes until they die too, then both reload the checkpoint | works with real deaths in a level. Not yet tested with the alien doing the killing |
-| Partner body: an NPC that walks where your partner walks, so the alien can see them | airport level only so far |
+| Partner body: an NPC that walks where your partner walks, so the alien can see them | works in levels that have the character; with `-Skins`, every level (see Skins) |
 | Skins: your partner shows up as a story character you pick (Taylor, Samuels, Axel...) | works in game in levels that already have the character (airport: both games spawned the partner as Axel and kept them on the partner). Part of the lobby's experimental mode |
+| `-Skins`: the five main characters copied into every level, with a model writer that keeps each level's own bytes | written; a load-and-save gives byte-identical model files and two levels with skins added read back correctly. Not loaded in the game yet |
 | Keycards and tools shared | written, not tried in a level yet |
 | Locked doors: one of you unlocks it (hack, keycard, code, lever, button) or cuts it open, it's open for both | written, not tried in a level yet |
 | Cutscenes: when one starts in your game, your partner is moved to you right away, so you watch it together | the move itself works in game (same as F7); a cutscene starting it not seen yet. On by default (`AIC_CUTSCENE_TP=0` turns it off) |
 | Automatic world sync: every saved world state and every one-time scripted step, in every level, with no per-object rules (1,394 objects found in the level files) | runs in game: events sent and replayed in the airport and in a new game's opening. A shared story step not watched happening on screen yet |
 | Level changes: when one of you takes a lift, tram or exit to another level, the other loads it too | written, not tried in a level yet |
 | Host's alien director drives the joiner's alien (vents, behaviour, stage) | written, not tried in a level yet |
-| One alien in the same place for both players: the joiner's alien follows the host's alien's exact path (30 updates a second, smoothed) | written and tested offline, not tried in a level yet; part of the lobby's experimental mode (`AIC_SHARED_ALIEN=1`) |
+| One alien for both players: the joiner's alien walks and runs the host's alien's path with its own animations (the game's own move orders), faces where it faces, has learned what it has learned, and a kill on the joiner's body kills the joiner | written and its decisions tested offline, not tried in a level yet; part of the lobby's experimental mode (`AIC_SHARED_ALIEN=1`) |
+| Lift rides and other scripted moves: your partner standing next to you goes with you | written and tested offline, not tried in a level yet |
 | New overlay: motion tracker, partner marker, death screens | tracker and marker checked in a level (airport, two copies on one PC); death screens only checked in rendered previews so far |
 | Split screen on one PC through [Couchlink](https://github.com/cranebeaker/couchlink) | recipe written, seats tested by hand, not run inside Couchlink yet |
 | A new game from the start, in co-op | works on one PC: both games started a new game, played the opening and loaded into the Torrens together |
-| Lobbies and Steam invites | planned, see [docs/online.md](docs/online.md) |
 
 ## Installing
 
@@ -90,10 +91,13 @@ To uninstall: `powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall`.
 The lobby uses UDP 45501 to find games and TCP on its own port for the save copy; the game itself uses UDP
 45500. Windows Firewall asks about `lobby.exe` and `AI.exe` the first time: allow them on private networks.
 
-**Over the internet:** open the *Internet* tab. It shows your Steam ID with a Copy button. The host presses
-*Host over Steam* and sends their ID; the friend pastes it and presses *Join*. Both games start and connect through
-Steam, so nobody needs an IP address or port forwarding. You each need your own Steam account. The save copy and
-ready check are LAN-only for now; the game itself checks that you run the same builds when you connect.
+**Over the internet:** open the *Internet* tab and press **Host a Steam lobby**. Your friends see you under
+*Friends online* as "hosting co-op" and press **Join**, or you invite them from the lobby screen (they accept the
+invite in Steam with their lobby window open). From there it's the same lobby as on a LAN: the same checks,
+**Copy host's save**, Ready and Start, all through Steam, so nobody needs an IP address or port forwarding. You
+each need your own Steam account with the game. While the lobby window is open Steam shows you as playing Alien:
+Isolation; it lets go of Steam just before the game starts. `play-coop.bat steam-host` / `steam-join <SteamID>`
+still work without the lobby (the Copy button gives you your Steam ID for that).
 
 ![Lobby: internet tab](docs/img/lobby_internet.png)
 
@@ -140,25 +144,34 @@ Every skin, with how many of the 20 levels have it (the cards are drawn by `tool
 In a level that doesn't have your pick, you show up as another skin that level has. Exact level lists are in
 `coopnet/skins.h`.
 
-**`-Skins` is off.** It used to copy the five main characters into every level with `tools/skinprep`, but in
-game testing the levels it wrote crashed the game while loading. The cause is the library it uses: loading a
-level with CathodeLib and saving it back unchanged already breaks it, because the level's model files
-(`LEVEL_MODELS.PAK`, `MODELS_LEVEL.BIN`) come out smaller and the game rejects them. That's the case in 0.12.2 and
-in the current staging build. If you installed v0.2.0 or v0.3.0 with `-Skins`, installing this version puts your
-original level files back for you (or use Steam's "Verify integrity of game files"). Until that's fixed,
-character bodies only appear in levels that already have the character, and elsewhere your partner is the
-overlay marker only.
+To get the five main characters (Taylor, Samuels, Axel, Ricardo, Marlow) into every level, install with `-Skins`
+(needs the [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0), a few minutes, game closed):
+
+```
+powershell -ExecutionPolicy Bypass -File install.ps1 -Skins
+```
+
+`tools/skinprep` copies each character's model, with everything it renders with, into the levels that lack it.
+v0.2.0 and v0.3.0 did this with CathodeLib's model writer, and the game couldn't load those levels: CathodeLib
+rebuilds a level's model files (`LEVEL_MODELS.PAK`, `MODELS_LEVEL.BIN`) from what it parsed, and they came out
+smaller and wrong even with nothing added. Now skinprep writes those two files itself (`ModelAppend.cs`): the
+level's own bytes stay exactly as they are and the new models are added at the end, copied raw from the level they
+come from with only their reference numbers changed. Loading a level and saving it back now gives byte-identical
+model files, and each written level is read back and checked before it's installed. The originals are backed up to
+`coop_backup\skins\` and put back when you uninstall (or use Steam's "Verify integrity of game files"). If you
+installed v0.2.0 or v0.3.0 with `-Skins`, the installer puts those broken levels back first. Not checked yet:
+loading the new levels in the game.
 
 ## Known issues
 
-- The partner marker is an overlay, so you can see it through walls. The 3D body only exists in the airport
-  level for now.
-- Each game still has its own alien. They follow the same director decisions but hunt on their own between them.
-- Your partner has a body only in levels that already contain the character models (see Skins); elsewhere
+- The partner marker is an overlay, so you can see it through walls.
+- Without `-Skins`, your partner has a body only in levels that already contain the character models; elsewhere
   they're the marker and tracker blip, and the alien in your game can't see them.
-- Things that happen over and over (lift rides inside a level, a terminal you can use again, music and light
-  zones) stay with the player who did them; only saved state and one-time steps are shared. Start from the same
-  save.
+- With the shared alien, its attacks and kill animations only play in the host's game; in the joiner's game it
+  walks the same path and the joiner dies when the host's alien gets their body.
+- Things that happen over and over (a terminal you can use again, music and light zones) stay with the player who
+  did them. Lift rides take a partner standing next to you along, but each game's lift doors and cab still work
+  on their own. Start from the same save.
 - A level change you follow skips the save the game normally makes right before it.
 - Only deaths that go through the game's normal death script are caught. If one slips through you just get
   the regular game-over menu (look for `life: player died` in the log).
@@ -235,16 +248,13 @@ second copy). Logs go to `coop_logs\`.
 
 ## What I'm working on next
 
-1. Run the new parts in the game: skins in the levels skinprep changed, the shared alien, door unlocks and
-   level changes, and a game started from the lobby.
-2. One shared alien that really hunts both players: today the joiner's alien is only kept near the host's.
-   Next, a kill on the joiner's body should count as the joiner's death.
-3. A death by the alien, then a full mission with two players.
-4. Two PCs, two Steam accounts.
-5. Run the recipe inside Couchlink.
-6. Steam lobbies and invites (ready check and save copy over Steam), on the same lobby protocol as the LAN lobby
-   ([docs/online.md](docs/online.md)).
-7. More world sync: terminals, rewiring, cutscenes.
+1. Run the new parts in the game: the levels the new skinprep writes, the shared alien driven by move orders,
+   carry-along in lifts, door unlocks, level changes, and Steam lobbies with two accounts.
+2. A death by the alien, then a full mission with two players.
+3. Two PCs.
+4. Run the recipe inside Couchlink.
+5. More world sync: terminals, rewiring.
+6. GOG and Epic builds (their addresses differ).
 
 ## Credits
 

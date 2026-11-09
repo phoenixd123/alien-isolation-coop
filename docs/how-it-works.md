@@ -41,7 +41,9 @@ flowchart LR
 | Where you are and where you're looking | 20 times a second | marker, tracker, partner body, spectating |
 | Something you did to the world (a door, an item, a story step...) | when it happens, sent 3 times | so it happens in their game too |
 | Alive, dying, dead, spectating | every half second and on every change | the co-op death rules |
-| Where your alien is | 10 times a second | tracker, bio-monitor, shared alien |
+| Where your alien is | 30 times a second | tracker, bio-monitor, shared alien |
+| The host's alien in full: facing, speed, in the vents, its setup, what it has learned, your body's deaths | 30 times a second (shared alien only) | the joiner's alien copies it |
+| "A script just moved me from here to there" | when it happens, sent 3 times | lift rides together |
 | Which character you want to be seen as | every 2 seconds | skins |
 
 Every message carries a version and a checksum; anything else is dropped. It's all small: well under 10 KB a
@@ -183,11 +185,19 @@ dying together) keeps working. The lobby makes the same check before you start.
 - **One director.** The host's game decides when the alien comes out of the vents, when it retreats and how
   aggressive it is. Those decisions are sent to the joiner's game, whose alien follows them. The joiner's game
   never sends its own.
-- **Shared alien (experimental).** The host sends its alien's position 30 times a second. The joiner's game plays
-  that path back a few hundredths of a second behind, smoothing between updates, and every frame puts its own
-  alien on that exact spot whenever it's more than 10 cm off. A sudden jump (the alien leaving through a vent
-  somewhere else) is followed as a jump, not a slide across the map. What isn't shared yet is the way it faces
-  and which animation it plays; those still come from the joiner's own alien.
+- **Shared alien (experimental).** The host's alien is the real one: it thinks, hunts and kills as in the
+  single-player game, and it sees the joiner's body like any other target. The joiner's alien is a copy:
+  - Its behaviour tree doesn't run, so it never decides anything of its own.
+  - Every frame it gets the game's own "move this way" order towards where the host's alien is, at the same
+    speed, so it walks, runs and turns with its own animations (the method is OpenCAGE's "possess a character").
+    When it's there it stops and turns to the host's alien's facing. More than 3 m off, a floor up or down, or in
+    the vents, it's put on the spot instead.
+  - Its alien setup and what the game has let it learn (its tricks, and the counters that unlock them) are set to
+    the host's.
+  - When the host's alien kills the joiner's body, the joiner dies in their own game, with the game's own kill.
+  - On the host, the joiner running near the alien makes noise it hears, as the player's own running would.
+
+  Its attacks and kill animations still only play in the host's game.
 
 ## Dying together
 
@@ -234,9 +244,11 @@ sequenceDiagram
 If the game doesn't show up on the joiner's list (VPN LANs often block broadcasts), type the host's address
 under *Join by address*.
 
-Over the internet, the *Internet* tab skips all of that: the host starts their game over Steam and shares their
-Steam ID, the friend types it in, and Steam connects the two games. The ready check and save copy there are still
-to come; the in-game build check covers the most important part.
+Over the internet, the *Internet* tab does the same with a Steam lobby. The host creates a friends-only lobby;
+friends see "hosting co-op" next to the host's name and press Join, or the host invites them. The joiner's lobby
+then asks the host's for its "there's a game here" over Steam, and from there it's the same conversation as above,
+carried by Steam instead of the LAN, including the save copy. On Start both lobby windows let go of Steam and the
+games connect to each other over Steam. Details in [online.md](online.md).
 
 ## Skins
 
@@ -246,14 +258,23 @@ Dropper7856), naming the character's model, skeleton and animations. Then it kee
 partner is. See the [skin cards](../README.md#skins-experimental) for which characters exist and where.
 
 A level can only show a character whose model it contains, and out of the box most characters are in one to
-four levels. Copying models into every level (`tools/skinprep`) is switched off: the library it uses writes the
-level's model files in a way the game won't load (found in in-game testing; details in [testing.md](testing.md)).
+four levels. `install.ps1 -Skins` copies the five main characters into every level (`tools/skinprep`). The scripts,
+materials, textures and the rest are written with CathodeLib, but the two model files are written by skinprep's
+own `ModelAppend.cs`, because CathodeLib's model writer produced files the game couldn't load (found in in-game
+testing; details in [testing.md](testing.md)). It keeps the level's model files byte for byte and adds each new
+model at the end: the model's records and data are copied raw from the level it comes from, and only the numbers
+that point at other things change (names, the next submesh and LOD, material, collision, morphs, vertex formats,
+bones). Then every file the level's scripts point at is checked to point at the new model.
 
 ## What it doesn't do (yet)
 
-- Things that can happen again and again (riding a lift inside a level, using a terminal twice) aren't shared;
-  only saved state and once-only steps are. Start from the same save.
+- Things that can happen again and again (using a terminal twice, music and light zones) aren't shared; only
+  saved state and once-only steps are. Start from the same save.
+- Lift rides: when a script moves you in one go (a lift between floors), your partner's game is told where from
+  and where to, and if they were standing within 3 m of where you left, they're moved by the same amount. Nothing
+  about lifts is known to the mod, so it works for any scripted move. Each game's lift doors and cab still run on
+  their own.
 - Your partner's body walks by being moved, not by playing walking animations.
-- The joiner's alien follows the host's alien's position exactly, but faces and animates on its own.
-- The newest parts (cutscene teleport, automatic world sync, skins in game, the shared alien, lock and level-change sync, starting
-  from the lobby) haven't been run in the game yet. [testing.md](testing.md) lists what has.
+- The shared alien's attacks and kills only play in the host's game.
+- The newest parts (the shared alien, carry-along, the new `-Skins` levels, Steam lobbies, cutscene teleport,
+  lock and level-change sync) haven't been run in the game yet. [testing.md](testing.md) lists what has.

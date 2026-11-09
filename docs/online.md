@@ -1,6 +1,6 @@
 # Online play: plan
 
-Status: the **LAN lobby is built** (`lobby/`, tested offline). Steam lobbies are **planned, not implemented**.
+Status: the **LAN lobby is built** and works in game on one PC. **Steam lobbies are built** (`lobby/lobbysteam.c`), not run with Steam yet.
 
 ## LAN lobby (done)
 
@@ -29,14 +29,33 @@ Not tested yet: two PCs, and a game started from the lobby.
 Steam relays the traffic, so nobody has to forward ports. I tested it on one PC: one account talking to itself
 (loopback), then two copies over UDP on localhost. I haven't tested it on two PCs with two accounts yet.
 
-## What this step adds
+## Steam lobbies (built, not run with Steam yet)
 
-1. **Steam lobbies and invites instead of Steam IDs.** Same HELLO/STATE packets as the LAN lobby, over Steam P2P. The host creates a friends-only, 2-member lobby with
-   `ISteamMatchmaking::CreateLobby` and opens the invite dialog (`ISteamFriends::ActivateGameOverlayInviteDialog`).
-   The friend accepts in Steam. Steam starts the game with `+connect_lobby <id>` (or sends `GameLobbyJoinRequested_t`
-   if it is already running), and coopnet joins the lobby and takes the owner's Steam ID as its peer. Rich presence
-   `connect` lets friends join from the friends list too. These interfaces are in the same `steam_api.dll` that
-   steamwrap already wraps, reached through the same flat `SteamAPI_*` exports `steamnet.c` uses.
+`lobby/lobbysteam.c`. The lobby window loads the game's own `steam_api` (`steam_api_real.dll` once the mod is
+installed) and starts it with the game's app ID, so Steam sees you playing Alien: Isolation while it's open.
+
+- **Host:** `CreateLobby` (friends-only, two members), tagged `aic=1`.
+- **Finding it:** a friend in one of the game's lobbies shows it in their game info (`GetFriendGamePlayed`), so the
+  Internet tab lists online friends with the ones hosting first, each with **Join**. No lobby browser and no IDs.
+- **Invites:** the lobby screen lists online friends with **Invite** (`InviteUserToLobby`). Accepting the invite
+  in Steam while the lobby window is open joins it (`GameLobbyJoinRequested_t`). Steam's own invite dialog isn't
+  used: it's part of the overlay, which doesn't draw on the lobby's plain window.
+- **Then the same lobby protocol as on a LAN** (`lobbyproto.h`), carried over Steam P2P on channel 6: a Steam
+  account is an `LbAddr` with port `LBS_PORT`, so one state machine handles both, and LAN broadcasts stay on the
+  LAN. The joiner sends the host a probe over Steam and joins the beacon that comes back, like *Join by address*.
+- **Save copy** uses the LAN copy's format and code (`lbnet_serve_stream` / `lbnet_fetch_stream`) over a reliable
+  P2P stream on channel 5, with the same backup of the joiner's save.
+- **Start:** both windows leave the Steam lobby and shut Steam down, then start the game in Steam mode connected
+  each other over Steam (the joiner to the host's Steam ID in `AIC_COOP_PEER_STEAM`), the same as
+  `play-coop.bat steam-host` / `steam-join`.
+
+Method slots come from the Steamworks headers for the interface versions the game's `steam_api.dll` has:
+SteamMatchMaking009, SteamFriends014, SteamNetworking005.
+
+## Still planned
+
+1. **Joining from an invite with the lobby closed.** Steam then starts the game itself with `+connect_lobby <id>`;
+   coopnet could pick that up and open the lobby window. For now, open `lobby.exe` first.
 2. **Handshake before sharing a world** (`OnlineHello`). Both games compare:
    - the mod version;
    - the `AI.exe` build;
