@@ -199,3 +199,37 @@ static inline int proto_build_diff(uint32_t my_mod, uint32_t my_game, const Buil
     if (!my_mod || !my_game || !k->mod || !k->game) return 0;
     return (my_mod != k->mod ? 1 : 0) | (my_game != k->game ? 2 : 0);
 }
+
+/* kind 9: the host's alien in full, from the game's own character (alien.c). 30 Hz. The joiner's alien is driven
+   from it: position, facing, speed, in the vents or not, its alien setup and what the game has let it learn.
+   flags: bit0 found, bit1 in the vents (backstage), bit2 learning read. kills counts the times the joiner's body in
+   the host's game died (the joiner dies too when it goes up). */
+#define ALX_FOUND 1u
+#define ALX_VENTS 2u
+#define ALX_LEARN 4u
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;
+    uint8_t  version, kind, flags, speed;   /* speed: the locomotion's 0 (slowest) to 3 */
+    uint32_t seq;
+    float    pos[3];
+    float    yaw;                           /* radians, forward = (sin, 0, cos) */
+    uint32_t setup;                         /* its alien setup (index into the level's), 0xFFFFFFFF unknown */
+    uint32_t learn_req, learn_have;         /* tricks asked for and those it has (bit masks) */
+    int32_t  counters[4];                   /* the counters that unlock them */
+    uint32_t mission;
+    uint32_t kills;
+    uint32_t check;
+} AlienExPkt;
+#pragma pack(pop)
+_Static_assert(sizeof(AlienExPkt) == 68, "AlienExPkt must be 68 bytes");
+static inline void proto_fill_alienx(AlienExPkt *k) {
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 9;
+    k->check = proto_sum(k, offsetof(AlienExPkt, check));
+}
+static inline int proto_check_alienx(const AlienExPkt *k, int len) {
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 9) return 0;
+    if (k->check != proto_sum(k, offsetof(AlienExPkt, check)) || k->speed > 3) return 0;
+    for (int i = 0; i < 3; i++) if (!(k->pos[i] == k->pos[i]) || k->pos[i] > 1e5f || k->pos[i] < -1e5f) return 0;
+    return k->yaw == k->yaw && k->yaw > -10.f && k->yaw < 10.f;
+}

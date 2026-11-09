@@ -314,6 +314,7 @@ int skin_teleport_player(const float pos[3], const float cam[3]) {
     }
     return 0;
 }
+uint32_t skin_body(void) { return g_active ? g_bound_chr : 0; }
 void skin_share_alien(int on, int tag) { g_alien_tag = tag; InterlockedExchange(&g_alien_on, on); }
 void skin_set_alien(int ok, const float pos[3]) {
     if (!g_alien_on || !g_lcs.DebugInfo) return;

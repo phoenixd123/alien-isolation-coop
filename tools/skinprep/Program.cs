@@ -5,7 +5,9 @@
 // For each skin (a DisplayModel:<NAME> composite) it finds a level that ships the model, then copies the composite
 // and everything it renders with (models, materials, textures, shaders, collision) into each level that lacks it.
 // Each level is written to a staging folder, re-loaded and checked, and only then copied over the level, after the
-// original files are backed up to <game>\coop_backup\levels\<LEVEL>\ (once; --restore puts them back).
+// original files are backed up to <game>\coop_backup\skins\<LEVEL>\ (once; --restore puts them back).
+// LEVEL_MODELS.PAK and MODELS_LEVEL.BIN are written by ModelAppend (the level's bytes plus the new models), not by
+// CathodeLib, whose model writer makes levels the game can't load.
 //
 // The import, closure and validation code is adapted from AI-MP's RipleyCharacterInstaller ("AI-MP — originally
 // created by Dropper7856", https://github.com/Dropper7856/AIMP), under the AI-MP Non-Commercial Attribution
@@ -30,7 +32,8 @@ static class P
         string? Opt(string k) { var i = Array.IndexOf(a, k); return i >= 0 && i + 1 < a.Length ? a[i + 1] : null; }
         var skins = (Opt("--skins")?.Split(',') ?? DefaultSkins).Select(s => s.Trim().ToUpperInvariant()).ToArray();
         var only = Opt("--levels")?.Split(',').Select(s => s.Trim().ToUpperInvariant()).ToHashSet();
-        bool dry = a.Contains("--dry"), restore = a.Contains("--restore"), roundtrip = a.Contains("--roundtrip");   // roundtrip: load and save, add nothing (diagnosis)
+        // roundtrip: load and save, add nothing (the model files must come back byte for byte); check: write and verify, don't publish
+        bool dry = a.Contains("--dry"), restore = a.Contains("--restore"), roundtrip = a.Contains("--roundtrip"), checkOnly = a.Contains("--check") || roundtrip;
         if (System.Diagnostics.Process.GetProcessesByName("AI").Length > 0) { Console.WriteLine("Close the game first."); return 2; }
 
         var env = Path.Combine(game, "DATA", "ENV");
@@ -77,9 +80,23 @@ static class P
                 }
                 var stage = Path.Combine(game, "coop_backup", "stage", name);
                 if (Directory.Exists(stage)) Directory.Delete(stage, true);
-                dest.SaveTo(stage);
+                var patched = dest.SaveTo(stage);
+                if (roundtrip)
+                    foreach (var f in new[] { "LEVEL_MODELS.PAK", "MODELS_LEVEL.BIN" })
+                        if (!File.ReadAllBytes(Path.Combine(l, "RENDERABLE", f)).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(stage, "RENDERABLE", f))))
+                            throw new InvalidDataException($"{f} didn't come back byte for byte");
                 var check = LoadChecked(stage, global, out var warn2);   // re-load what we wrote
                 if (warn2 != null) throw new InvalidDataException("written scripts don't load cleanly: " + warn2);
+                // every added skin must resolve in the written files, to the same mesh bytes as in its own level
+                foreach (var s in missing)
+                {
+                    var comps = Closure(check.Commands, new[] { check.Commands.GetComposite("DisplayModel:" + s) ?? throw new InvalidDataException($"{s} not in the written scripts") });
+                    Validate(check, comps);
+                    var srcComps = Closure(Src(sourceOf[s]).Commands, new[] { Src(sourceOf[s]).Commands.GetComposite("DisplayModel:" + s)! });
+                    var want = srcComps.SelectMany(c => c.GetEntities().SelectMany(ResourcesOf)).Where(r => r.resource_type == ResourceType.RENDERABLE_INSTANCE).SelectMany(r => r.RenderableInstance).Select(e => e.Model.Data.Length).ToList();
+                    var got = comps.SelectMany(c => c.GetEntities().SelectMany(ResourcesOf)).Where(r => r.resource_type == ResourceType.RENDERABLE_INSTANCE).SelectMany(r => r.RenderableInstance).Select(e => e.Model.Data.Length).ToList();
+                    if (!want.SequenceEqual(got)) throw new InvalidDataException($"{s}: written model doesn't match its source");
+                }
                 var after = Counts(check.Commands);
                 // Existing composites must come back the same. The one change CathodeLib makes on every save is writing a
                 // function's resources out as a "resource" parameter too; that alone is allowed.
@@ -101,6 +118,12 @@ static class P
                                 throw new InvalidDataException($"{c1.name}: parameters changed when written (+{string.Join(",", added)} -{string.Join(",", lost)})");
                         }
                 }
+                if (checkOnly)
+                {
+                    Directory.Delete(stage, true);
+                    Console.WriteLine($"{name}: {(roundtrip ? "round trip identical" : "would add " + string.Join(", ", missing))}, written and checked, not installed ({patched} level records re-pointed)");
+                    continue;
+                }
                 Publish(game, env, l, stage);
                 Directory.Delete(stage, true);
                 Console.WriteLine($"{name}: added {string.Join(", ", missing)}");
@@ -109,7 +132,7 @@ static class P
             }
             catch (Exception e) { Console.WriteLine($"{name}: FAILED, level left unchanged: {e.Message}"); failed++; }
         }
-        if (!dry && only == null)
+        if (!dry && !checkOnly && only == null)
         {
             File.WriteAllLines(Path.Combine(game, "coop_skins.txt"), have.Select(kv => kv.Key + " " + string.Join(" ", kv.Value)));
             Console.WriteLine("wrote coop_skins.txt");
@@ -284,7 +307,9 @@ static class P
                 if (Hash(existing) != Hash(copy)) throw new InvalidDataException($"a different model named {o.Name} is already in the level");
                 models.Add(o, existing); return existing;
             }
-            dst.Models.Entries.Add(copy); models.Add(o, copy); return copy;
+            dst.Models.Entries.Add(copy); models.Add(o, copy);
+            dst.Added.Add(new NewModel(copy, o, src.Files));
+            return copy;
         }
         Materials.Material Material(Materials.Material o)
         {
@@ -313,6 +338,10 @@ static class P
         public readonly MaterialMappings Mappings; public readonly CollisionMaps CollisionMaps; public readonly EnvironmentAnimations Animations;
         public readonly Commands Commands;
         public readonly CathodeFile[] All;
+        public readonly List<Models.CS2.Component.LOD.Submesh> Loaded;   // the level's submeshes in file order, as loaded
+        public readonly List<NewModel> Added = new();
+        ModelFiles? files;
+        public ModelFiles Files => files ??= new ModelFiles(Models.Filepath);
         // root: a level folder (or a staging folder with RENDERABLE and WORLD); worldOverride for staging
         public Assets(string root, Global global, string? realWorld = null)
         {
@@ -331,9 +360,12 @@ static class P
             Commands = new(Path.Combine(w, "COMMANDS.PAK"), Animations, CollisionMaps, Renderables);
             All = new CathodeFile[] { Textures, Shaders, Collisions, Morphs, Materials, Mappings, Models, Renderables, CollisionMaps, Animations, Commands };
             foreach (var f in All) if (!f.Loaded) throw new InvalidDataException($"can't parse {f.Filepath}");
+            Loaded = ModelAppend.LoadedOrder(Models);
         }
-        public void SaveTo(string stage)
+        // Returns how many of the level's own model records had to point at a moved material / collision / morph set.
+        public int SaveTo(string stage)
         {
+            int patched = 0;
             Directory.CreateDirectory(Path.Combine(stage, "RENDERABLE")); Directory.CreateDirectory(Path.Combine(stage, "WORLD"));
             var old = Console.Out; Console.SetOut(TextWriter.Null);   // CathodeLib prints a line per table it saves
             try
@@ -341,17 +373,29 @@ static class P
                 foreach (var f in All)   // dependency order matters: it rebuilds lookup tables later files use
                 {
                     var sub = f.Filepath.StartsWith(WorldRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? "WORLD" : "RENDERABLE";
+                    if (ReferenceEquals(f, Models))
+                    {
+                        // not CathodeLib's writer (the game rejects its model files): the level's bytes plus the new models
+                        var (pak, bin, n) = ModelAppend.Build(Files, Loaded, Added, Materials, Collisions, Morphs, out var order);
+                        var dir = Path.Combine(stage, sub);
+                        File.WriteAllBytes(Path.Combine(dir, Path.GetFileName(Files.PakPath)), pak);
+                        File.WriteAllBytes(Path.Combine(dir, Path.GetFileName(Files.BinPath)), bin);
+                        ModelAppend.SetWriteOrder(Models, order);
+                        patched = n;
+                        continue;
+                    }
                     if (!f.Save(Path.Combine(stage, sub, Path.GetFileName(f.Filepath)))) throw new IOException($"failed to write {sub}\\{Path.GetFileName(f.Filepath)}");
                 }
             }
             finally { Console.SetOut(old); }
+            return patched;
         }
     }
 
     // ---------- backup, publish, restore ----------
     static void Publish(string game, string env, string level, string stage)
     {
-        var bk = Path.Combine(game, "coop_backup", "levels", Key(env, level));
+        var bk = Path.Combine(game, "coop_backup", "skins", Key(env, level));
         foreach (var file in Directory.GetFiles(stage, "*", SearchOption.AllDirectories))
         {
             var rel = Path.GetRelativePath(stage, file);
@@ -364,7 +408,7 @@ static class P
     }
     static void Restore(string game, string env, string level)
     {
-        var bk = Path.Combine(game, "coop_backup", "levels", Key(env, level));
+        var bk = Path.Combine(game, "coop_backup", "skins", Key(env, level));
         if (!Directory.Exists(bk)) { Console.WriteLine($"{Key(env, level)}: no backup"); return; }
         foreach (var f in Directory.GetFiles(bk, "*", SearchOption.AllDirectories))
         {

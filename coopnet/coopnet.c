@@ -30,6 +30,7 @@
 #include "version.h"
 #include "cutscene.h"
 #include "engine.h"
+#include "alien.h"
 #include <stdlib.h>
 #include <dwmapi.h>
 
@@ -41,7 +42,8 @@ void puppet_tick(int in_level, int peer_live, const float peer_cam_pos[3], void 
 
 static FILE *g_log, *g_csv;
 static int g_skins;              /* AIC_SKINS=1: partner body as a story character (skin.c) */
-static int g_share_alien;        /* AIC_SHARED_ALIEN=1: the joiner's alien is kept where the host's is (skin.c) */
+static int g_share_alien;        /* AIC_SHARED_ALIEN=1: one alien for both (alien.c; skin.c's position snapping if that won't hook) */
+static int g_alien_full;         /* alien.c is on */
 static char g_my_skin[24] = "TAYLOR";   /* AIC_SKIN: how the partner sees you */
 static char g_profile[32] = "default";
 static char g_name[16] = "partner";
@@ -554,6 +556,12 @@ static void read_chars(void) {
     static uint32_t seq;
     AlienPkt k; proto_fill_alien(&k, ++seq, ap, found != 0);
     net_raw(&k, sizeof k);
+    if (g_alien_full && g_is_host) {   /* the full alien (alien.c), read on the game's AI thread */
+        static uint32_t xseq;
+        AlienExPkt x; alien_read(&x);
+        x.seq = ++xseq; proto_fill_alienx(&x);
+        net_raw(&x, sizeof x);
+    }
 }
 
 static void on_alien(const AlienPkt *k) {
@@ -644,13 +652,13 @@ static void net_send(const Cam *c) {
 
 static void net_recv(void) {
     for (;;) {
-        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; SkinPkt k; CutPkt c; BuildPkt b; uint8_t raw[128]; } u;
+        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; SkinPkt k; CutPkt c; BuildPkt b; AlienExPkt x; uint8_t raw[128]; } u;
         struct sockaddr_in from; int fl = sizeof from, n;
         if (g_steam) n = steamnet_recv(&u, sizeof u);
         else n = recvfrom(g_sock, (char *)&u, sizeof u, 0, (struct sockaddr *)&from, &fl);
         if (n <= 0) return;
         int kind = proto_check_world(&u.w, n) ? 2 : proto_check_life(&u.l, n) ? 3 : proto_check_alien(&u.a, n) ? 4 :
-                   proto_check_skin(&u.k, n) ? 5 : proto_check_cut(&u.c, n) ? 6 : proto_check_build(&u.b, n) ? 8 : proto_check(&u.p, n) ? 1 : 0;
+                   proto_check_skin(&u.k, n) ? 5 : proto_check_cut(&u.c, n) ? 6 : proto_check_build(&u.b, n) ? 8 : proto_check_alienx(&u.x, n) ? 9 : proto_check(&u.p, n) ? 1 : 0;
         if (!kind) continue;
         if (!g_steam && g_learn_peer && (!g_peer_fixed || from.sin_addr.s_addr != g_peer_addr.sin_addr.s_addr || from.sin_port != g_peer_addr.sin_port)) {
             g_peer_addr = from; g_peer_fixed = 1;   /* host: talk back to the joiner (latest address wins, handles NAT rebinding) */
@@ -662,6 +670,7 @@ static void net_recv(void) {
         if (kind == 4) { on_alien(&u.a); continue; }
         if (kind == 5) { if (g_skins) skin_set_partner(u.k.skin); continue; }
         if (kind == 6) { on_cut(&u.c); continue; }
+        if (kind == 9) { if (g_alien_full && !g_is_host) alien_from_host(&u.x); continue; }
         if (kind == 8) {
             LONG bad = proto_build_diff(g_mod_hash, g_game_build, &u.b);
             if (InterlockedExchange(&g_build_bad, bad) != bad) {
@@ -1001,6 +1010,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
                 if (now - last_skin >= 2000) { SkinPkt k; proto_fill_skin(&k, g_my_skin); net_raw(&k, sizeof k); last_skin = now; }
                 float feet[3] = {pp[0], pp[1] - 1.65f, pp[2]};
                 skin_set_target(in_level && live && (pp[0] != 0.f || pp[2] != 0.f), feet);
+                if (g_alien_full && in_level && live && (pp[0] != 0.f || pp[2] != 0.f)) alien_partner_at(feet);
             }
             /* a skin body replaces the borrowed-NPC body */
             if (!g_skins || (!skin_active() && !skin_level_has_skin())) puppet_tick(in_level, live, pp, logf_);
@@ -1086,8 +1096,10 @@ static void init(HMODULE self) {
         }
         g_skins = GetEnvironmentVariableA("AIC_SKINS", sb, sizeof sb) && sb[0] == '1';
         g_share_alien = GetEnvironmentVariableA("AIC_SHARED_ALIEN", sb, sizeof sb) && sb[0] == '1';
-        if ((g_skins || g_share_alien) && !skin_install(logf_, g_skins)) g_skins = g_share_alien = 0;
-        if (g_share_alien) skin_share_alien(1, g_alien_tag);
+        if (g_share_alien) g_alien_full = alien_install(logf_, g_is_host);
+        if ((g_skins || (g_share_alien && !g_alien_full)) && !skin_install(logf_, g_skins)) { g_skins = 0; if (!g_alien_full) g_share_alien = 0; }
+        if (g_share_alien && !g_alien_full) skin_share_alien(1, g_alien_tag);   /* older way: only the position */
+        if (g_skins) alien_body_hook = skin_body;
         logf_("skin: %s (you are %s); shared alien: %s", g_skins ? "on" : "off", g_my_skin, g_share_alien ? "on (joiner follows the host's alien)" : "off");
     }
     CloseHandle(CreateThread(NULL, 0, net_thread, NULL, 0, NULL));

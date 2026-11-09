@@ -1,7 +1,7 @@
 ﻿# Builds steamwrap (steam_api.dll) and coopnet.dll, runs every offline test, and assembles the player package.
 # Needs Zig 0.16.0 (https://ziglang.org/download/). Pass its path with -Zig, or have zig on PATH.
-# -Skinprep (with the .NET 8 SDK) also builds tools/skinprep into the package; it is off for now (see below).
-param([string]$Zig = "zig", [string]$Dotnet = "dotnet", [switch]$Skinprep)
+# With the .NET 8 SDK (-Dotnet) it also builds tools/skinprep into the package (-NoSkinprep leaves it out).
+param([string]$Zig = "zig", [string]$Dotnet = "dotnet", [switch]$NoSkinprep)
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $out = Join-Path $root "build"
@@ -21,7 +21,7 @@ try { & .\harness.exe; $rc = $LASTEXITCODE } finally { Pop-Location }
 if ($rc) { throw "steamwrap offline test failed" }
 
 # --- coopnet + its tests (wire protocol over real UDP, projection math)
-Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" "$root\coopnet\replay.c" "$root\coopnet\worldsync.c" "$root\coopnet\life.c" "$root\coopnet\sfx.c" "$root\coopnet\ui.c" "$root\coopnet\skin.c" "$root\coopnet\engine.c" -lws2_32 -lgdi32 -luser32 -lwinmm -ldwmapi -lgdiplus
+Z -shared -O2 -Wall -Wextra -o "$out\coopnet.dll" "$root\coopnet\coopnet.c" "$root\coopnet\probe.c" "$root\coopnet\puppet.c" "$root\coopnet\steamnet.c" "$root\coopnet\replay.c" "$root\coopnet\worldsync.c" "$root\coopnet\life.c" "$root\coopnet\sfx.c" "$root\coopnet\ui.c" "$root\coopnet\skin.c" "$root\coopnet\engine.c" "$root\coopnet\alien.c" -lws2_32 -lgdi32 -luser32 -lwinmm -ldwmapi -lgdiplus
 # overlay screens rendered offscreen (check the images in build\ui\)
 New-Item -ItemType Directory -Force "$out\ui" | Out-Null
 Z -O2 -Wall -Wextra -o "$out\ui_preview.exe" "$root\coopnet\test\ui_preview.c" "$root\coopnet\ui.c" -lgdiplus -lgdi32
@@ -69,9 +69,8 @@ New-Item -ItemType Directory -Force $pkg | Out-Null
 Copy-Item "$out\steam_api.dll", "$out\coopnet.dll", "$out\lobby.exe", "$root\dist\install.ps1", "$root\dist\play-coop.bat", "$root\README.md", "$root\LICENSE" $pkg
 Copy-Item -Recurse "$root\dist\couchlink" (Join-Path $pkg "couchlink")
 Copy-Item -Recurse "$root\third_party" (Join-Path $pkg "third_party")
-# skinprep isn't shipped: CathodeLib (0.12.2 and staging c3efa4ea) writes LEVEL_MODELS.PAK / MODELS_LEVEL.BIN so the
-# game can't load the level (docs/testing.md). Pass -Skinprep to build it anyway, for work on that.
-$dn = if ($Skinprep) { Get-Command $Dotnet -ErrorAction SilentlyContinue } else { $null }
+# skinprep (the installer's -Skins step); needs the .NET 8 runtime on the player's PC. -NoSkinprep leaves it out.
+$dn = if (-not $NoSkinprep) { Get-Command $Dotnet -ErrorAction SilentlyContinue } else { $null }
 if ($dn) {
     & $Dotnet publish "$root\tools\skinprep" -c Release -o (Join-Path $pkg "skinprep") --self-contained false -p:DebugType=None -p:DebugSymbols=false -v q -nologo | Out-Null
     if ($LASTEXITCODE) { throw "skinprep publish failed" }

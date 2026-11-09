@@ -5,6 +5,7 @@
 #include "../alien_interp.h"
 #include "../cutscene.h"
 #include "../proto.h"
+#include "../alien_pup.h"
 
 static int fails, passes;
 #define CHECK(c, m) do { if (c) passes++; else { fails++; printf("FAIL: %s\n", m); } } while (0)
@@ -121,6 +122,35 @@ int main(void) {
     CHECK(proto_build_diff(0, 0x2222, &bk) == 0, "unknown build: no verdict");
     BuildPkt bb = bk; bb.mod = 5;
     CHECK(!proto_check_build(&bb, sizeof bb), "build checksum");
+
+    /* the joiner's alien: walk to the host's, stop and turn when there, put there when far or in the vents */
+    {
+        PupState ps = {0}; float me[3] = {0, 0, 0}; PupStep st;
+        float far[3] = {5, 0, 0}, mid[3] = {1, 0, 0}, near_[3] = {0.1f, 0, 0}, up[3] = {0.5f, 2.5f, 0}, edge[3] = {0.3f, 0, 0};
+        st = pup_decide(&ps, me, 0, far, 0, 1, 0);   CHECK(st.act == PUP_TELEPORT, "far off: put there");
+        st = pup_decide(&ps, me, 0, up, 0, 1, 0);    CHECK(st.act == PUP_TELEPORT, "a floor up or down: put there");
+        st = pup_decide(&ps, me, 0, mid, 0, 1, 0);   CHECK(st.act == PUP_STEER && fabsf(st.heading - 1.5707964f) < 1e-3f && st.speed == 1, "1 m off along +x: walk along +x at its speed");
+        st = pup_decide(&ps, me, 0, edge, 0, 1, 0);  CHECK(st.act == PUP_STEER, "still walking until nearer than PUP_ARRIVE_M");
+        st = pup_decide(&ps, me, 0, near_, 0, 1, 0); CHECK(st.act == PUP_STOP && !st.set_yaw, "arrived, same facing: stop");
+        st = pup_decide(&ps, me, 0, edge, 0, 1, 0);  CHECK(st.act == PUP_STOP, "stopped: doesn't start again for 0.3 m (no jitter)");
+        st = pup_decide(&ps, me, 0, near_, 2.0f, 1, 0); CHECK(st.set_yaw && st.yaw > 0.4f && st.yaw < 0.6f, "standing: turns a quarter of the way to its facing");
+        st = pup_decide(&ps, me, 3.0f, near_, -3.0f, 1, 0); CHECK(st.set_yaw && st.yaw > 3.0f, "turns the short way round");
+        float behind[3] = {0, 0, 2.5f};
+        st = pup_decide(&ps, me, 0, behind, 0, 3, 0); CHECK(st.act == PUP_STEER && st.speed == 3 && fabsf(st.heading) < 1e-3f, "fell behind at top speed: stays at 3");
+        st = pup_decide(&ps, me, 0, behind, 0, 1, 0); CHECK(st.speed == 2, "fell behind: one speed up");
+        st = pup_decide(&ps, me, 0, mid, 0, 1, 1);    CHECK(st.act == PUP_TELEPORT, "in the vents: follows the point");
+        st = pup_decide(&ps, me, 0, near_, 0, 1, 1);  CHECK(st.act == PUP_STOP, "in the vents and there: nothing");
+    }
+    {
+        AlienExPkt x; memset(&x, 0, sizeof x);
+        x.flags = ALX_FOUND | ALX_LEARN; x.speed = 2; x.pos[0] = 3; x.yaw = 1.f; x.setup = 4; x.learn_have = 0x18E; x.kills = 1;
+        proto_fill_alienx(&x);
+        CHECK(proto_check_alienx(&x, sizeof x), "alien packet round trip");
+        CHECK(!proto_check_alienx(&x, sizeof x - 1), "alien packet: wrong length");
+        AlienExPkt y = x; y.kills = 2; CHECK(!proto_check_alienx(&y, sizeof y), "alien packet checksum");
+        y = x; y.speed = 7; y.check = proto_sum(&y, offsetof(AlienExPkt, check)); CHECK(!proto_check_alienx(&y, sizeof y), "alien packet: bad speed");
+        y = x; y.yaw = NAN; y.check = proto_sum(&y, offsetof(AlienExPkt, check)); CHECK(!proto_check_alienx(&y, sizeof y), "alien packet: bad facing");
+    }
 
     printf("sync_test: %d/%d checks passed\n", passes, passes + fails);
     return fails != 0;

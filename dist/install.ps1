@@ -12,8 +12,11 @@ What it does (install):
   5. Copies (never moves) your existing Steam saves into <game dir>\coop_saves\default, so co-op
      starts where you are. Co-op progress stays there and never touches your Steam Cloud saves.
   6. Copies lobby.exe (the co-op launcher) and play-coop.bat into the game folder.
-  7. If an older version's -Skins changed your level files, puts the originals back (those levels don't load:
-     the library it used writes the level's model files wrong). -Skins is off until that's fixed.
+  7. If v0.2.0 / v0.3.0's -Skins changed your level files, puts the originals back (those levels didn't load:
+     CathodeLib rewrote the level's model files).
+  8. With -Skins (needs the .NET 8 runtime): runs skinprep, which copies five story characters' models into every
+     level so your partner can show up as one. It keeps each level's model files byte for byte and adds the new
+     models at the end. Changed files are backed up to <game dir>\coop_backup\skins first.
 Uninstall puts the original steam_api.dll and level files back and removes the added files. coop_saves is kept.
 #>
 param([string]$GameDir, [switch]$Uninstall, [switch]$Force, [switch]$NoSaveImport, [switch]$Skins)
@@ -45,10 +48,11 @@ $GameDir = (Resolve-Path $GameDir).Path
 if (Get-Process AI -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$GameDir*" }) { throw "Close the game first." }
 
 $api = Join-Path $GameDir "steam_api.dll"; $real = Join-Path $GameDir "steam_api_real.dll"
-# Level files changed by -Skins in v0.2.0 / v0.3.0 (backups in coop_backup\levels\<LEVEL>\...): copy them back. A ".new" marker
-# means the file didn't exist before: delete it.
-function Restore-Levels([string]$GameDir) {
-    $bk = Join-Path $GameDir "coop_backup\levels"
+# Put level files back from a backup folder (<LEVEL>\... per level). A ".new" marker means the file didn't exist before:
+# delete it. "levels" holds v0.2.0 / v0.3.0 -Skins backups (their levels crash, always restored); "skins" holds the
+# current skinprep's (restored on uninstall).
+function Restore-Levels([string]$GameDir, [string]$Folder = "levels") {
+    $bk = Join-Path $GameDir ("coop_backup\" + $Folder)
     if (-not (Test-Path $bk)) { return }
     $prod = Join-Path $GameDir "DATA\ENV\PRODUCTION"
     $n = 0
@@ -63,7 +67,7 @@ function Restore-Levels([string]$GameDir) {
             $n++
         }
     }
-    Rename-Item $bk ("levels-restored-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+    Rename-Item $bk ("$Folder-restored-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
     $sk = Join-Path $GameDir "coop_skins.txt"; if (Test-Path $sk) { Remove-Item $sk }
     "restored $n original level files that -Skins had changed"
 }
@@ -72,6 +76,7 @@ $added = "coopnet.dll", "steam_appid.txt", "play-coop.bat", "lobby.exe", "lobby.
 if ($Uninstall) {
     if (Test-Path $real) { Move-Item $real $api -Force; "restored original steam_api.dll" } else { "no steam_api_real.dll found; steam_api.dll left as is" }
     Restore-Levels $GameDir
+    Restore-Levels $GameDir "skins"
     foreach ($f in $added) { $p = Join-Path $GameDir $f; if (Test-Path $p) { Remove-Item $p; "removed $f" } }
     "Uninstalled. Your co-op saves are still in $GameDir\coop_saves (delete it yourself if you don't want them)."
     return
@@ -100,5 +105,16 @@ if (-not $NoSaveImport -and -not (Test-Path $saves)) {
     else { "no Steam saves found; co-op starts a new game" }
 }
 Restore-Levels $GameDir
-if ($Skins) { "skins: -Skins is off in this release (the level files it wrote didn't load in testing). Character bodies still work in the levels that have the characters already." }
+$skinprep = Join-Path $here "skinprep\skinprep.exe"
+function Have-Net8 { try { return [bool]((& dotnet --list-runtimes 2>$null) -match "^Microsoft\.NETCore\.App 8\.") } catch { return $false } }
+if ($Skins) {
+    if (-not (Test-Path $skinprep)) { "skins: skinprep isn't in this package, skipped" }
+    elseif (-not (Have-Net8)) { "skins: needs the .NET 8 runtime (https://dotnet.microsoft.com/download/dotnet/8.0), skipped. Run the installer again with -Skins after installing it." }
+    else {
+        "skins: copying character models into every level (a few minutes, originals backed up to coop_backup\skins)"
+        & $skinprep $GameDir
+        if ($LASTEXITCODE -eq 3) { "skins: some levels failed and were left unchanged; the others are done" }
+        elseif ($LASTEXITCODE) { "skins: skinprep stopped (code $LASTEXITCODE); your level files are unchanged or restored per level" }
+    }
+}
 "Done. Start co-op with lobby.exe in the game folder (or play-coop.bat, see README)."
