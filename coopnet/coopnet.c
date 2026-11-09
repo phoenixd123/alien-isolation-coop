@@ -108,6 +108,9 @@ static CutTrail g_trail;                 /* our recent positions (g_cs) */
 static volatile LONG g_cut_local;       /* a cutscene started here; the net thread sends */
 static DWORD g_cut_sent_t, g_cut_recv_t, g_ui_cut_t; static uint32_t g_cut_seen_id;
 static float g_tp_pos[3]; static volatile LONG g_tp_pending; static int g_tp_kind;   /* 0 cutscene, 1 regroup */
+static volatile DWORD g_own_tp_t;          /* when the mod last moved us (carry-along ignores that jump) */
+static volatile DWORD g_level_t0;          /* when we last entered a level */
+static uint32_t g_carry_seen_id;
 static DWORD g_tp_at, g_fade_t0;         /* teleport after the fade-out (cutscene.h) */
 static volatile LONG g_regroup_req; static volatile float g_regroup_prog;   /* F7 */
 static uint32_t g_regroup_id; static DWORD g_regroup_ask_t, g_ui_regroup_t, g_coming_t;
@@ -375,7 +378,7 @@ static void menu_fallback(void);
 static void start_tp(const float pos[3], int kind) {   /* any thread: fade out, then move (game thread) */
     DWORD now = GetTickCount();
     EnterCriticalSection(&g_cs); memcpy(g_tp_pos, pos, 12); g_tp_kind = kind; LeaveCriticalSection(&g_cs);
-    g_fade_t0 = now | 1; g_tp_at = now + TP_FADE_OUT_MS;
+    g_fade_t0 = now | 1; g_tp_at = now + TP_FADE_OUT_MS; g_own_tp_t = now | 1;
     InterlockedExchange(&g_tp_pending, 1);
 }
 /* Build fingerprints (same as the lobby's): FNV-1a of a file, and AI.exe's PE timestamp and image size. */
@@ -403,10 +406,10 @@ static void cut_teleport_tick(void) {
     if (ticket) {
         int r = engine_result(ticket);
         if (r == ENG_PENDING) return;
-        logf_("%s: %s (%.1f %.1f %.1f)", kind ? "regroup" : "cutscene",
+        logf_("%s: %s (%.1f %.1f %.1f)", kind == 2 ? "carry" : kind ? "regroup" : "cutscene",
               r == ENG_DONE ? "moved to the partner" : r == ENG_DEAD ? "not moved (we're dead)" : r == ENG_NO_BODY ? "not moved (no physics body just now)" : "not moved (no player)",
               at[0], at[1], at[2]);
-        if (r == ENG_DONE) { if (kind) g_ui_regroup_t = GetTickCount(); else g_ui_cut_t = GetTickCount(); }
+        if (r == ENG_DONE) { g_own_tp_t = GetTickCount() | 1; if (kind == 1) g_ui_regroup_t = GetTickCount(); else if (kind == 0) g_ui_cut_t = GetTickCount(); }
         ticket = 0;
     }
     if (!g_tp_pending || (int32_t)(GetTickCount() - g_tp_at) < 0) return;
@@ -537,7 +540,20 @@ static void read_chars(void) {
         hud_motion_update(&g_track[k], r, now);
         memcpy(g_track_pos[k], r, 12); g_track_tag[k] = tag;
         LeaveCriticalSection(&g_cs);
-        if (tag == 0) { EnterCriticalSection(&g_cs); cut_trail_push(&g_trail, now, r); LeaveCriticalSection(&g_cs); }
+        if (tag == 0) {
+            EnterCriticalSection(&g_cs); cut_trail_push(&g_trail, now, r); int alive = g_life.state == LIFE_ALIVE; LeaveCriticalSection(&g_cs);
+            /* carry-along: a script moved us in one go (a lift between floors): tell the partner where from and to */
+            static float prev[3]; static DWORD prev_t;
+            DWORD tp = g_own_tp_t, l0 = g_level_t0;
+            if (prev_t && carry_is_jump(prev, r, (int32_t)(now - prev_t), tp ? (int32_t)(now - tp) : -1, l0 ? (int32_t)(now - l0) : 0, alive)) {
+                CarryPkt ck; proto_fill_carry(&ck, (uint32_t)now ^ (g_pid << 16) ^ 0xCA77u, prev, r);
+                for (int i = 0; i < 3; i++) net_raw(&ck, sizeof ck);
+                logf_("carry: a script moved us %.1f m (%.1f %.1f %.1f -> %.1f %.1f %.1f), telling the partner",
+                      sqrtf((r[0] - prev[0]) * (r[0] - prev[0]) + (r[1] - prev[1]) * (r[1] - prev[1]) + (r[2] - prev[2]) * (r[2] - prev[2])),
+                      prev[0], prev[1], prev[2], r[0], r[1], r[2]);
+            }
+            memcpy(prev, r, 12); prev_t = now;
+        }
         if (!found && (int)tag == g_alien_tag) { found = 1; memcpy(ap, r, 12); }
         if (found == 1 && (int)tag == g_alien_tag && g_alien_pin && !g_is_host) {
             EnterCriticalSection(&g_cs);
@@ -571,6 +587,20 @@ static void on_alien(const AlienPkt *k) {
         if (g_share_alien && !g_is_host) skin_set_alien(k->flags & 1, k->pos);
     }
     LeaveCriticalSection(&g_cs);
+}
+
+/* Partner was moved by a script (carry-along, cutscene.h): if we were right there, we go with them. */
+static void on_carry(const CarryPkt *k) {
+    if (k->id == g_carry_seen_id) return;
+    g_carry_seen_id = k->id;
+    float me[3], to[3]; int have, alive;
+    EnterCriticalSection(&g_cs);
+    have = g_trail.n > 0; if (have) memcpy(me, g_trail.p[(g_trail.head + CUT_TRAIL - 1) % CUT_TRAIL], 12);
+    alive = g_life.state == LIFE_ALIVE;
+    LeaveCriticalSection(&g_cs);
+    if (!carry_follow(alive, have, me, k->from, k->to, to)) { logf_("carry: partner was moved by a script; we weren't with them"); return; }
+    start_tp(to, 2);
+    logf_("carry: partner was moved by a script and we were with them, going too (%.1f %.1f %.1f)", to[0], to[1], to[2]);
 }
 
 /* Partner's cutscene started: move there now (cutscene.h decides; the teleport runs on the game thread). */
@@ -652,13 +682,13 @@ static void net_send(const Cam *c) {
 
 static void net_recv(void) {
     for (;;) {
-        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; SkinPkt k; CutPkt c; BuildPkt b; AlienExPkt x; uint8_t raw[128]; } u;
+        union { PresencePkt p; WorldPkt w; LifePkt l; AlienPkt a; SkinPkt k; CutPkt c; BuildPkt b; AlienExPkt x; CarryPkt y; uint8_t raw[128]; } u;
         struct sockaddr_in from; int fl = sizeof from, n;
         if (g_steam) n = steamnet_recv(&u, sizeof u);
         else n = recvfrom(g_sock, (char *)&u, sizeof u, 0, (struct sockaddr *)&from, &fl);
         if (n <= 0) return;
         int kind = proto_check_world(&u.w, n) ? 2 : proto_check_life(&u.l, n) ? 3 : proto_check_alien(&u.a, n) ? 4 :
-                   proto_check_skin(&u.k, n) ? 5 : proto_check_cut(&u.c, n) ? 6 : proto_check_build(&u.b, n) ? 8 : proto_check_alienx(&u.x, n) ? 9 : proto_check(&u.p, n) ? 1 : 0;
+                   proto_check_skin(&u.k, n) ? 5 : proto_check_cut(&u.c, n) ? 6 : proto_check_build(&u.b, n) ? 8 : proto_check_alienx(&u.x, n) ? 9 : proto_check_carry(&u.y, n) ? 10 : proto_check(&u.p, n) ? 1 : 0;
         if (!kind) continue;
         if (!g_steam && g_learn_peer && (!g_peer_fixed || from.sin_addr.s_addr != g_peer_addr.sin_addr.s_addr || from.sin_port != g_peer_addr.sin_port)) {
             g_peer_addr = from; g_peer_fixed = 1;   /* host: talk back to the joiner (latest address wins, handles NAT rebinding) */
@@ -670,6 +700,7 @@ static void net_recv(void) {
         if (kind == 4) { on_alien(&u.a); continue; }
         if (kind == 5) { if (g_skins) skin_set_partner(u.k.skin); continue; }
         if (kind == 6) { on_cut(&u.c); continue; }
+        if (kind == 10) { on_carry(&u.y); continue; }
         if (kind == 9) { if (g_alien_full && !g_is_host) alien_from_host(&u.x); continue; }
         if (kind == 8) {
             LONG bad = proto_build_diff(g_mod_hash, g_game_build, &u.b);
@@ -965,7 +996,7 @@ static DWORD WINAPI net_thread(LPVOID p) {
             {   /* a level (or a checkpoint) just started: its start-up scripts run in both games, don't send them */
                 static int was_in;
                 if (!in_lvl) ws_settle(15000);   /* menus and loading: the level's start-up scripts run before the camera exists */
-                else if (!was_in) logf_("worldsync: level started, not sending for 15 s");
+                else if (!was_in) { logf_("worldsync: level started, not sending for 15 s"); g_level_t0 = now | 1; }
                 was_in = in_lvl;
             }
             {   /* builds, every 3 s */

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 #define AIC_MAGIC 0x50434941u  /* "AICP" */
 #define AIC_VERSION 1
@@ -232,4 +233,28 @@ static inline int proto_check_alienx(const AlienExPkt *k, int len) {
     if (k->check != proto_sum(k, offsetof(AlienExPkt, check)) || k->speed > 3) return 0;
     for (int i = 0; i < 3; i++) if (!(k->pos[i] == k->pos[i]) || k->pos[i] > 1e5f || k->pos[i] < -1e5f) return 0;
     return k->yaw == k->yaw && k->yaw > -10.f && k->yaw < 10.f;
+}
+
+/* kind 10: the sender was moved by a script in one go (cutscene.h carry-along), from -> to. Sent three times. */
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;
+    uint8_t  version, kind, pad[2];
+    uint32_t id;
+    float    from[3], to[3];
+    uint32_t check;
+} CarryPkt;
+#pragma pack(pop)
+_Static_assert(sizeof(CarryPkt) == 40, "CarryPkt must be 40 bytes");
+static inline void proto_fill_carry(CarryPkt *k, uint32_t id, const float from[3], const float to[3]) {
+    memset(k, 0, sizeof *k);
+    k->magic = AIC_MAGIC; k->version = AIC_VERSION; k->kind = 10; k->id = id; memcpy(k->from, from, 12); memcpy(k->to, to, 12);
+    k->check = proto_sum(k, offsetof(CarryPkt, check));
+}
+static inline int proto_check_carry(const CarryPkt *k, int len) {
+    if (len != (int)sizeof *k || k->magic != AIC_MAGIC || k->version != AIC_VERSION || k->kind != 10) return 0;
+    if (k->check != proto_sum(k, offsetof(CarryPkt, check))) return 0;
+    for (int i = 0; i < 3; i++)
+        if (!(k->from[i] == k->from[i]) || !(k->to[i] == k->to[i]) || fabsf(k->from[i]) > 5000.f || fabsf(k->to[i]) > 5000.f) return 0;
+    return 1;
 }

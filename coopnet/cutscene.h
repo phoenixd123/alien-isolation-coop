@@ -75,3 +75,27 @@ static inline float tp_fade(int32_t ms) {
     if (ms < TP_FADE_OUT_MS + TP_FADE_IN_MS) return 1.f - (float)(ms - TP_FADE_OUT_MS) / TP_FADE_IN_MS;
     return 0.f;
 }
+
+/* Carry-along: when the game moves you by script in one go (a lift ride between floors, a scripted move), your
+   partner standing right next to you is moved by the same amount, so you ride together. Nothing about lifts is
+   known here: a jump of more than CARRY_JUMP_M between two position samples (30 a second) that the mod didn't
+   make, while alive and well into a level, counts as a scripted move. */
+#define CARRY_JUMP_M   2.5f
+#define CARRY_MAX_M    400.f      /* bigger: a reload or a level, not a move */
+#define CARRY_GAP_MS   150        /* the two samples at most this far apart */
+#define CARRY_QUIET_MS 3000       /* not this soon after a mod teleport or entering the level */
+#define CARRY_NEAR_M   3.0f       /* the partner was this close to where you jumped from */
+static inline int carry_is_jump(const float a[3], const float b[3], int32_t dt_ms, int32_t since_tp_ms, int32_t in_level_ms, int alive) {
+    float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], d = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (!alive || dt_ms < 0 || dt_ms > CARRY_GAP_MS || in_level_ms < CARRY_QUIET_MS) return 0;
+    if (since_tp_ms >= 0 && since_tp_ms < CARRY_QUIET_MS) return 0;
+    return d == d && d > CARRY_JUMP_M && d < CARRY_MAX_M;
+}
+/* The partner jumped from `from` to `to`; we're at `me`. 1 and the spot to move to if we were with them. */
+static inline int carry_follow(int alive, int have_me, const float me[3], const float from[3], const float to[3], float out[3]) {
+    if (!alive || !have_me) return 0;
+    float dx = me[0] - from[0], dy = me[1] - from[1], dz = me[2] - from[2];
+    if (!(dx * dx + dy * dy + dz * dz <= CARRY_NEAR_M * CARRY_NEAR_M)) return 0;
+    for (int i = 0; i < 3; i++) out[i] = me[i] + (to[i] - from[i]);
+    return 1;
+}

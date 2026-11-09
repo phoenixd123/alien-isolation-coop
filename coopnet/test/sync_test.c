@@ -152,6 +152,27 @@ int main(void) {
         y = x; y.yaw = NAN; y.check = proto_sum(&y, offsetof(AlienExPkt, check)); CHECK(!proto_check_alienx(&y, sizeof y), "alien packet: bad facing");
     }
 
+    /* carry-along: a scripted jump is told to the partner, who comes along only if they were right there */
+    {
+        float a[3] = {0, 0, 0}, b[3] = {0, 4, 0}, walk[3] = {0.1f, 0, 0}, out[3];
+        CHECK(carry_is_jump(a, b, 33, -1, 10000, 1), "4 m in one sample, well into the level: a scripted move");
+        CHECK(!carry_is_jump(a, walk, 33, -1, 10000, 1), "walking isn't");
+        CHECK(!carry_is_jump(a, b, 33, 1000, 10000, 1), "not right after one of our own teleports");
+        CHECK(!carry_is_jump(a, b, 33, -1, 1000, 1), "not right after entering the level");
+        CHECK(!carry_is_jump(a, b, 33, -1, 10000, 0), "not while dead");
+        CHECK(!carry_is_jump(a, b, 500, -1, 10000, 1), "not across a gap in the samples");
+        float far_[3] = {0, 0, 900};
+        CHECK(!carry_is_jump(a, far_, 33, -1, 10000, 1), "a reload across the map isn't a lift ride");
+        float me[3] = {1, 0, 1}, from[3] = {0, 0, 0}, to[3] = {0, 8, 20};
+        CHECK(carry_follow(1, 1, me, from, to, out) && near3(out, 1, 8, 21), "next to the partner: moved by the same amount");
+        float me_far[3] = {10, 0, 0};
+        CHECK(!carry_follow(1, 1, me_far, from, to, out), "elsewhere: stays");
+        CHECK(!carry_follow(0, 1, me, from, to, out), "dead: stays");
+        CarryPkt ck; proto_fill_carry(&ck, 7, from, to);
+        CHECK(proto_check_carry(&ck, sizeof ck), "carry packet round trip");
+        ck.to[1] = 9; CHECK(!proto_check_carry(&ck, sizeof ck), "carry packet checksum");
+    }
+
     printf("sync_test: %d/%d checks passed\n", passes, passes + fails);
     return fails != 0;
 }
