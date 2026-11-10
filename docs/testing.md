@@ -80,6 +80,48 @@ same IDs the mod uses, so the rule can fire there. 2026-11-06:
 The two LV426 levels have no `Door_Package` or `Door_Mechanism` doors (the derelict uses its own), so door and lock
 sync doesn't reach them. The Survivor map has no story mission composites, as expected.
 
+## In game, 2026-11-09 (v0.4.0)
+
+Two copies on one PC (Steam build 4940658), bot-driven, host p1 and joiner p2 over UDP on localhost.
+
+- **Why the `-Skins` levels never loaded.** skinprep's new model writer (byte-identical round trip) still made the
+  game quit while loading, silently and with exit code 0. Bisected on HAB_AIRPORT: a full CathodeLib round trip
+  loads; one character's materials, textures and shaders alone load; adding any model, even a copy of one of the
+  airport's own props under a new name, quits. Logged the game's exit with `AIC_DIAG=1` (a new diagnostic in
+  coopnet: serious exceptions, `ExitProcess`, and the game's quit request, each with the game-code return
+  addresses on the stack) and followed it with Ghidra: `FILE_HASHES::verify_integrity` (RVA 0x374CA0) checks some
+  data files against a table of sizes and hashes and requests quit when one differs. `MODELS_LEVEL.BIN` is one of
+  them. OpenCAGE patches its two calls in AI.exe on disk; coopnet now points them at its own check in memory, which
+  waives it only for files skinprep changed (those with a backup in `coop_backup\skins`). So it was never
+  CathodeLib's writer that broke v0.2/v0.3's levels.
+- **`-Skins` in game:** installed on 19 levels (0 failed; TECH_COMMS skipped as before). The airport with Taylor,
+  Samuels, Ricardo and Marlow added loads. Two copies in the airport, host as Taylor and joiner as Samuels (neither
+  is in the airport's own files): both bodies spawned, and the joiner saw the host as Taylor, rendered correctly.
+  Survivor (The Basement, DLC_CHALLENGEMAP16) with skins: both bodies spawned there too.
+- **Shared alien** (Survivor, the alien spawned by hand with `AIC_DEBUG_SPAWN`, a test-only switch that calls
+  the generic `spawn` method on its script entity as OpenCAGE does):
+  - The joiner's alien walks the host's alien's path with move orders: in one 3-minute run 27,922 move orders and
+    40 teleports, the two aliens within about a metre at every 5-second sample (20:42:44: host's (-18.9, -21.2),
+    joiner's (-18.9, -21.1) two seconds earlier).
+  - Found and fixed: put into the vents by a teleport, the joiner's alien took no more teleports and stayed there
+    (the vents need its own mind to leave). It now waits outside while the host's alien is in the vents, climbs
+    out by itself if it is in the vents and the host's alien isn't (an alien spawns in the vents), and is respawned
+    (despawn, spawn) if it is still stuck after 20 s.
+  - Found and fixed: during the host alien's kill its behaviour updates stopped, the joiner's alien was let go,
+    thought for itself and killed the joiner. The host now reads its alien straight from the character list when
+    the AI-thread data is stale, and the joiner's alien never thinks for itself while the host is connected.
+  - Found and fixed: the shared-alien role was set before the network side knew it, so the host ran as a joiner.
+  - Not seen: a kill on the joiner's body in the host's game (the test lure brought the alien no closer: in this
+    challenge the start room is shut until objectives are done).
+- **Joiner crash on loading into a level the host was already playing:** an access violation in the game's script
+  entity code 3 s after the level appeared, right after partner world events were replayed. Partner events are now
+  held until our own level has been running 8 s, then applied in order (seen: 9 held, applied, no crash).
+- **Carry-along false alarms:** the alien's kill animation and the menus jump the player back and forth; that sent
+  thousands of carries and dragged the other player along. A move now counts only once it has settled (one jump,
+  then 0.5 s in place), only in a running level, at most one every 8 s. 0 false carries in the next runs.
+- Not exercised: a real lift ride (carry-along), a cutscene pull, a level change, Steam lobbies with two accounts,
+  two PCs.
+
 ## In game, 2026-11-08 (v0.3.1)
 
 Two copies on one PC (Steam build 4940658), bot-driven, host p1 and joiner p2 over UDP on localhost.

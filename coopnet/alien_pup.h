@@ -3,7 +3,9 @@
  * The joiner's alien doesn't think for itself (its behaviour tree isn't run, alien.c): each frame it is given the
  * game's own move-in-direction order towards where the host's alien is, at the host's alien's speed, so it walks
  * and runs with its own animations. Close enough, it stops and turns to the host's alien's facing. Too far off (it
- * fell behind, a door, the host's alien jumped) or in the vents, it is put there instead.
+ * fell behind, a door, the host's alien jumped), it is put there instead. While the host's alien is in the vents it
+ * waits where it is: put into the vents, an alien takes no more teleports and has no way out without its own mind
+ * (found in game), so it only ever comes back out where the host's alien does, by a teleport from outside.
  */
 #pragma once
 #include <math.h>
@@ -31,11 +33,7 @@ static inline PupStep pup_decide(PupState *s, const float me[3], float my_yaw, c
     PupStep r = {PUP_STOP, 0.f, 0, 0, my_yaw};
     float dx = want[0] - me[0], dy = want[1] - me[1], dz = want[2] - me[2];
     float d = sqrtf(dx * dx + dz * dz);
-    if (host_vents) {   /* the vents are the game's abstract map: no walking there, follow the point */
-        s->steering = 0;
-        if (d > PUP_ARRIVE_M || fabsf(dy) > PUP_ARRIVE_M) r.act = PUP_TELEPORT;
-        return r;
-    }
+    if (host_vents) { s->steering = 0; return r; }   /* wait outside the vents */
     if (d > PUP_SNAP_M || fabsf(dy) > PUP_SNAP_DY) { s->steering = 0; r.act = PUP_TELEPORT; return r; }
     if (d > PUP_GO_M || (s->steering && d > PUP_ARRIVE_M)) {
         s->steering = 1;

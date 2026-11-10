@@ -138,8 +138,8 @@ int main(void) {
         float behind[3] = {0, 0, 2.5f};
         st = pup_decide(&ps, me, 0, behind, 0, 3, 0); CHECK(st.act == PUP_STEER && st.speed == 3 && fabsf(st.heading) < 1e-3f, "fell behind at top speed: stays at 3");
         st = pup_decide(&ps, me, 0, behind, 0, 1, 0); CHECK(st.speed == 2, "fell behind: one speed up");
-        st = pup_decide(&ps, me, 0, mid, 0, 1, 1);    CHECK(st.act == PUP_TELEPORT, "in the vents: follows the point");
-        st = pup_decide(&ps, me, 0, near_, 0, 1, 1);  CHECK(st.act == PUP_STOP, "in the vents and there: nothing");
+        st = pup_decide(&ps, me, 0, far, 0, 1, 1);    CHECK(st.act == PUP_STOP && !st.set_yaw, "host's alien in the vents: ours waits outside");
+        st = pup_decide(&ps, me, 0, far, 0, 1, 0);    CHECK(st.act == PUP_TELEPORT, "and when it comes out far away, ours is put there");
     }
     {
         AlienExPkt x; memset(&x, 0, sizeof x);

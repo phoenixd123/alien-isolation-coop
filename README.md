@@ -37,17 +37,17 @@ PC. I haven't played it across two PCs yet. My full test notes are in [docs/test
 | Items your partner picks up vanish from your world | works |
 | Story steps your partner reaches run in your game | works for one tested step (M04 crowbar), not a whole mission |
 | Dying: you watch through your partner's eyes until they die too, then both reload the checkpoint | works with real deaths in a level. Not yet tested with the alien doing the killing |
-| Partner body: an NPC that walks where your partner walks, so the alien can see them | works in levels that have the character; with `-Skins`, every level (see Skins) |
+| Partner body: an NPC that walks where your partner walks, so the alien can see them | works in game, in every level with `-Skins` (checked in the airport and Survivor) |
 | Skins: your partner shows up as a story character you pick (Taylor, Samuels, Axel...) | works in game in levels that already have the character (airport: both games spawned the partner as Axel and kept them on the partner). Part of the lobby's experimental mode |
-| `-Skins`: the five main characters copied into every level, with a model writer that keeps each level's own bytes | written; a load-and-save gives byte-identical model files and two levels with skins added read back correctly. Not loaded in the game yet |
+| `-Skins`: the five main characters copied into every level | works in game: 19 levels changed; the airport with four characters added loads, and Taylor and Samuels (not in the airport's own files) spawned and rendered |
 | Keycards and tools shared | written, not tried in a level yet |
 | Locked doors: one of you unlocks it (hack, keycard, code, lever, button) or cuts it open, it's open for both | written, not tried in a level yet |
 | Cutscenes: when one starts in your game, your partner is moved to you right away, so you watch it together | the move itself works in game (same as F7); a cutscene starting it not seen yet. On by default (`AIC_CUTSCENE_TP=0` turns it off) |
 | Automatic world sync: every saved world state and every one-time scripted step, in every level, with no per-object rules (1,394 objects found in the level files) | runs in game: events sent and replayed in the airport and in a new game's opening. A shared story step not watched happening on screen yet |
 | Level changes: when one of you takes a lift, tram or exit to another level, the other loads it too | written, not tried in a level yet |
 | Host's alien director drives the joiner's alien (vents, behaviour, stage) | written, not tried in a level yet |
-| One alien for both players: the joiner's alien walks and runs the host's alien's path with its own animations (the game's own move orders), faces where it faces, has learned what it has learned, and a kill on the joiner's body kills the joiner | written and its decisions tested offline, not tried in a level yet; part of the lobby's experimental mode (`AIC_SHARED_ALIEN=1`) |
-| Lift rides and other scripted moves: your partner standing next to you goes with you | written and tested offline, not tried in a level yet |
+| One alien for both players: the joiner's alien walks and runs the host's alien's path with its own animations (the game's own move orders), faces where it faces, has learned what it has learned, and a kill on the joiner's body kills the joiner | works in game (Survivor): the two aliens stay within about a metre, almost all by walking; vents handled. A kill on the joiner's body not seen yet. Part of the lobby's experimental mode |
+| Lift rides and other scripted moves: your partner standing next to you goes with you | runs in game without false alarms (kill animations and menus no longer trigger it); a real lift ride not tried yet |
 | New overlay: motion tracker, partner marker, death screens | tracker and marker checked in a level (airport, two copies on one PC); death screens only checked in rendered previews so far |
 | Split screen on one PC through [Couchlink](https://github.com/cranebeaker/couchlink) | recipe written, seats tested by hand, not run inside Couchlink yet |
 | A new game from the start, in co-op | works on one PC: both games started a new game, played the opening and loaded into the Torrens together |
@@ -260,7 +260,9 @@ second copy). Logs go to `coop_logs\`.
 
 - [OpenCAGE](https://github.com/MattFiler/OpenCAGE) by Matt Filer (MIT): the way coopnet moves the player for
   cutscenes and F7 (`coopnet/engine.c`) follows OpenCAGE's runtime tools, which also confirmed the engine addresses
-  the mod uses.
+  the mod uses. The shared alien (`coopnet/alien.c`) uses its "possess a character" method (skipping the behaviour
+  tree, the move-in-direction order), its alien learning, setup and sensed-message calls and its spawn call; the file
+  check that `-Skins` levels need waived is the one OpenCAGE's PatchManager patches.
 - [CathodeLib](https://github.com/OpenCAGE/CathodeLib) by Matt Filer, used by `levelmod` and `skinprep` to read and
   patch level files. `skinprep` in the zip also ships K4os.Compression.LZ4 and K4os.Hash.xxHash (MIT) and
   xxHash.NET (BSD); their licenses are in `third_party/licenses/`.

@@ -177,14 +177,15 @@ static void coast(void) {
     float ahead = *(float *)(g_order.object + 0x24);
     if (ahead > 2.0f) { *(float *)(g_order.object + 0x24) = 2.0f; g_order.object[0x34] = 1; }
 }
-static void put_at(uint32_t c, const float p[3]) {
+static int put_at(uint32_t c, const float p[3]) {
     int32_t idx = -1;
-    if (!rd(c + 0x60, &idx, 4) || idx < 0 || idx >= 18) return;
+    if (!rd(c + 0x60, &idx, 4) || idx < 0 || idx >= 18) return 0;
     uintptr_t ctl = g_base + RVA_CONTROLLERS + (uintptr_t)idx * 0xB0u;
     uint8_t ready = 0;
-    if (u32(ctl) != c || !rd(ctl + 0xA8, &ready, 1) || !ready) return;
+    if (u32(ctl) != c || !rd(ctl + 0xA8, &ready, 1) || !ready) return 0;   /* no physics body (in the vents, a cinematic) */
     float pos[4] __attribute__((aligned(16))) = {p[0], p[1], p[2], 0.f};
     g_repos((void *)ctl, pos);
+    return 1;
 }
 
 /* ---- host: read the alien, watch the partner's body, make the partner heard ---- */
@@ -222,6 +223,19 @@ static void host_frame(uint32_t c) {
     LeaveCriticalSection(&g_cs);
 
     DWORD now = GetTickCount();
+    {   /* tests only: AIC_DEBUG_LURE=1 makes the alien hear the partner's body every 5 s, past its alerted threshold */
+        static DWORD lured; static int lure = -1;
+        if (lure < 0) { char v[8]; lure = GetEnvironmentVariableA("AIC_DEBUG_LURE", v, sizeof v) && v[0] == '1'; }
+        uint32_t hd[2]; float bp[3]; uint32_t pl = first_player();
+        if (lure && body && pl && now - lured > 5000 && rd(pl + 0x54, hd, 8) && rd(body + 0x70, bp, 12)) {
+            if (g_log) g_log("alien: test lure at the partner's body (%.1f %.1f %.1f)", bp[0], bp[1], bp[2]);
+            uint8_t msg[0x40] __attribute__((aligned(16))); double step; float t = game_time(&step);
+            memset(msg, 0, sizeof msg);
+            g_make(msg, 11, hd[0], hd[1], bp, 1.0f, 0, 2, t, (float)step);
+            g_post((void *)(uintptr_t)(c + 0x3BA8), msg, 0);
+            lured = now;
+        }
+    }
     if (now - pt < 500 && mps > PUP_NOISE_MPS && now - g_noise_t > PUP_NOISE_MS && !(k.flags & ALX_VENTS)) {
         uint32_t who = body ? body : first_player();
         uint32_t handle[2];
@@ -263,8 +277,35 @@ static void joiner_learning(uint32_t c, const AlienExPkt *h) {
     }
 }
 
+/* Script-entity method calls queued for the script thread (alien_entity_tick): respawning a stuck alien. */
+#define M_DESPAWN 0x06DE470Cu
+#define M_SPAWN   0x38BD237Au
+static CRITICAL_SECTION g_qcs; static int g_qcs_ok;
+static struct { uint32_t ent, inst, method; DWORD at; } g_q[4]; static int g_qn;
+static void queue_call(uint32_t ent, uint32_t inst, uint32_t method, DWORD at) {
+    if (!g_qcs_ok) return;
+    EnterCriticalSection(&g_qcs);
+    if (g_qn < 4) { g_q[g_qn].ent = ent; g_q[g_qn].inst = inst; g_q[g_qn].method = method; g_q[g_qn].at = at; g_qn++; }
+    LeaveCriticalSection(&g_qcs);
+}
+
 static void drive(uint8_t *c, const AlienExPkt *h) {
     DWORD now = GetTickCount();
+    /* Stuck in the vents while the host's alien is out (it has no way out without its own mind): respawn it through
+       its script entity, despawn then spawn, and it is put on the host's alien once it is back. */
+    static DWORD stuck_since, respawned_at;
+    uint8_t back = 0, inv = 0;
+    rd((uintptr_t)c + 0x2DA, &back, 1); rd((uintptr_t)c + 0x2B4, &inv, 1);
+    if ((back || inv) && !(h->flags & ALX_VENTS)) {
+        if (!stuck_since) stuck_since = now | 1;
+        uint32_t hd[2];
+        if (now - stuck_since > 20000 && (!respawned_at || now - respawned_at > 15000) && rd((uintptr_t)c + 0x54, hd, 8) && hd[0]) {
+            respawned_at = now | 1; stuck_since = 0;
+            queue_call(hd[0], hd[1], M_DESPAWN, now); queue_call(hd[0], hd[1], M_SPAWN, now + 1000);
+            if (g_log) g_log("alien: ours is stuck in the vents; respawning it to follow the host's alien again");
+        }
+        return;
+    } else stuck_since = 0;
     float want[3], me[3], yaw = 0;
     EnterCriticalSection(&g_cs);
     int have = alien_track_at(&g_track, now - DELAY_MS, want);
@@ -273,8 +314,9 @@ static void drive(uint8_t *c, const AlienExPkt *h) {
     PupStep s = pup_decide(&g_ps, me, yaw, want, h->yaw, h->speed, (h->flags & ALX_VENTS) != 0);
     if (s.act == PUP_TELEPORT) {
         withdraw(&g_order, 0);
-        put_at((uint32_t)(uintptr_t)c, want);
-        if (g_log && (++g_tps == 1 || now - g_drive_log_t > 10000)) { g_drive_log_t = now; g_log("alien: put at the host's alien (%u times, %u steers)", g_tps, g_steers); }
+        if (put_at((uint32_t)(uintptr_t)c, want) && g_log && (++g_tps == 1 || now - g_drive_log_t > 10000)) {
+            g_drive_log_t = now; g_log("alien: put at the host's alien (%u times, %u steers)", g_tps, g_steers);
+        }
     } else if (s.act == PUP_STEER) {
         if (steer(c, s.heading, s.speed)) g_steers++;
     } else {
@@ -332,6 +374,18 @@ static void __attribute__((thiscall)) behaviour_hook(void *self, float elapsed, 
         return;
     }
     if (!g_pup) { g_pup = (uint8_t *)(uintptr_t)c; g_pup_id = id; if (g_log) g_log("alien: the joiner's alien follows the host's now"); }
+    /* Ours is in the vents and the host's isn't (an alien spawns in the vents and drops out with its own mind): let it
+       think until it is out - from the vents it can't reach anyone - then it is put on the host's alien. */
+    uint8_t back = 0, inv = 0; rd(c + 0x2DA, &back, 1); rd(c + 0x2B4, &inv, 1);
+    if ((back || inv) && !(h.flags & ALX_VENTS)) {
+        static DWORD said;
+        if (g_log && now - said > 10000) { said = now; g_log("alien: ours is in the vents, letting it climb out"); }
+        withdraw(&g_order, 0);
+        g_behaviour_orig(self, elapsed, time);
+        joiner_learning(c, &h);
+        drive(g_pup, &h);   /* only the stuck check acts while it is in the vents */
+        return;
+    }
     t_skip_tree = 1;
     g_behaviour_orig(self, elapsed, time);
     t_skip_tree = 0;
@@ -381,6 +435,7 @@ int alien_install(void (*logf)(const char *, ...), int host) {
         return 0;
     }
     InitializeCriticalSection(&g_cs);
+    InitializeCriticalSection(&g_qcs); g_qcs_ok = 1;
     g_create = (create_fn)(g_base + RVA_MOVE_ORDER); g_queue = (order_fn)(g_base + RVA_QUEUE); g_withdraw = (withdraw_fn)(g_base + RVA_WITHDRAW);
     g_set_setup = (setup_fn)(g_base + RVA_SET_SETUP); g_make = (make_fn)(g_base + RVA_MAKE_SENSED); g_post = (post_fn)(g_base + RVA_POST_SENSED);
     g_kill = (kill_fn)(g_base + RVA_FORCE_KILL); g_repos = (repos_fn)(g_base + RVA_REPOSITION);
@@ -464,23 +519,19 @@ int alien_following(void) { return g_on && !g_host && g_pup != NULL; }
    queued method call, and the release of the counted pointer. Same addresses (Steam build). */
 static volatile LONG g_dbg_armed;
 void alien_debug_arm(void) { InterlockedExchange(&g_dbg_armed, 1); }
-void alien_entity_tick(void) {
-    if (!InterlockedExchange(&g_dbg_armed, 0)) return;
-    char v[48]; unsigned ent = 0, inst = 0;
-    if (!GetEnvironmentVariableA("AIC_DEBUG_SPAWN", v, sizeof v) || sscanf(v, "%x:%x", &ent, &inst) != 2) return;
+static int call_method(uint32_t ent, uint32_t inst, uint32_t method) {
     uintptr_t b = (uintptr_t)GetModuleHandleW(NULL);
     static const uint8_t s_lock[2] = {0x56, 0x68}, s_find[3] = {0x55, 0x8B, 0xEC}, s_rel[3] = {0x56, 0x8B, 0xF1};
-    if (!bytes_ok(b + 0x51E1B0u, s_lock, 2) || !bytes_ok(b + 0x5236A0u, s_find, 3) || !bytes_ok(b + 0x5425A0u, s_find, 3) || !bytes_ok(b + 0x198230u, s_rel, 3)) {
-        if (g_log) g_log("alien: debug spawn: functions don't match this build"); return;
-    }
+    if (!bytes_ok(b + 0x51E1B0u, s_lock, 2) || !bytes_ok(b + 0x5236A0u, s_find, 3) || !bytes_ok(b + 0x5425A0u, s_find, 3) || !bytes_ok(b + 0x198230u, s_rel, 3))
+        return -1;
     typedef void(__attribute__((thiscall)) *acc_fn)(void *);
     typedef void **(__attribute__((thiscall)) *find_fn)(void *, void **, const uint32_t *);
     typedef void(__attribute__((thiscall)) *call_fn)(void *, void **, const uint32_t *, uint32_t);
     typedef void(__attribute__((thiscall)) *rel_fn)(void **);
     uint32_t mgr = u32(b + 0x134EF40u);
-    if (!mgr) { if (g_log) g_log("alien: debug spawn: no entity manager"); return; }
+    if (!mgr) return 0;
     uint8_t access[8] = {0}; void *found = NULL;
-    const uint32_t handle[2] = {ent, inst}, method = 0x38BD237Au;
+    const uint32_t handle[2] = {ent, inst};
     ((acc_fn)(b + 0x51E1B0u))(access);
     ((find_fn)(b + 0x5236A0u))((void *)(uintptr_t)mgr, &found, handle);
     int called = 0;
@@ -492,5 +543,23 @@ void alien_entity_tick(void) {
     }
     if (found) ((rel_fn)(b + 0x198230u))(&found);
     ((acc_fn)(b + 0x51E1D0u))(access);
-    if (g_log) g_log("alien: debug spawn %08x:%08x -> %s", ent, inst, called ? "spawn called" : "entity not found");
+    return called;
+}
+void alien_entity_tick(void) {
+    if (g_qcs_ok && g_qn) {   /* queued calls whose time has come */
+        DWORD now = GetTickCount();
+        EnterCriticalSection(&g_qcs);
+        for (int i = 0; i < g_qn; i++) {
+            if ((int32_t)(now - g_q[i].at) < 0) continue;
+            int r = call_method(g_q[i].ent, g_q[i].inst, g_q[i].method);
+            if (g_log) g_log("alien: %s on our alien -> %s", g_q[i].method == M_SPAWN ? "spawn" : "despawn", r > 0 ? "called" : "not found");
+            g_q[i] = g_q[--g_qn]; i--;
+        }
+        LeaveCriticalSection(&g_qcs);
+    }
+    if (!InterlockedExchange(&g_dbg_armed, 0)) return;
+    char v[48]; unsigned ent = 0, inst = 0;
+    if (!GetEnvironmentVariableA("AIC_DEBUG_SPAWN", v, sizeof v) || sscanf(v, "%x:%x", &ent, &inst) != 2) return;
+    int r = call_method(ent, inst, M_SPAWN);
+    if (g_log) g_log("alien: debug spawn %08x:%08x -> %s", ent, inst, r > 0 ? "spawn called" : r < 0 ? "functions don't match this build" : "entity not found");
 }

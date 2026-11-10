@@ -258,7 +258,9 @@ Dropper7856), naming the character's model, skeleton and animations. Then it kee
 partner is. See the [skin cards](../README.md#skins-experimental) for which characters exist and where.
 
 A level can only show a character whose model it contains, and out of the box most characters are in one to
-four levels. `install.ps1 -Skins` copies the five main characters into every level (`tools/skinprep`). The scripts,
+four levels. The game also checks some of its data files against a built-in table of sizes and hashes, and quits
+without a word when one differs; a level with characters added fails it. coopnet waives that check in memory, and
+only for files skinprep changed (OpenCAGE does the same by patching AI.exe on disk; the mod never changes AI.exe). `install.ps1 -Skins` copies the five main characters into every level (`tools/skinprep`). The scripts,
 materials, textures and the rest are written with CathodeLib, but the two model files are written by skinprep's
 own `ModelAppend.cs`, because CathodeLib's model writer produced files the game couldn't load (found in in-game
 testing; details in [testing.md](testing.md)). It keeps the level's model files byte for byte and adds each new
