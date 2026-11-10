@@ -189,8 +189,8 @@ static class ModelAppend
                 ModelFiles.W32(r, 52, Map(ModelFiles.I32(r, 52)));
                 if (ModelFiles.I32(r, 64) != -1) throw new InvalidDataException($"{nm.Source.Name}: uses a collision proxy of its level, can't be copied");
                 ModelFiles.W32(r, 56, Idx(copy.Material, mats.GetWriteIndex, "material"));
-                ModelFiles.W32(r, 72, Idx(copy.WeightedCollision, cols.GetWriteIndex, "weighted collision"));
-                ModelFiles.W16(r, 88, (short)Idx(copy.MorphAnimSet, morphs.GetWriteIndex, "morph set"));
+                ModelFiles.W32(r, 72, Environment.GetEnvironmentVariable("SKINPREP_DIAG_NOCOL") == "1" ? -1 : Idx(copy.WeightedCollision, cols.GetWriteIndex, "weighted collision"));
+                ModelFiles.W16(r, 88, Environment.GetEnvironmentVariable("SKINPREP_DIAG_NOMORPH") == "1" ? (short)-1 : (short)Idx(copy.MorphAnimSet, morphs.GetWriteIndex, "morph set"));
                 for (int f = 80; f <= 84; f += 2) ModelFiles.W16(r, f, (short)VfIndex(src, (ushort)ModelFiles.I16(r, f)));
                 int bones = (ushort)ModelFiles.I16(r, 94);
                 if (bones > 0)

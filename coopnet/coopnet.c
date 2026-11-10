@@ -154,6 +154,7 @@ static void net_init(void) {
     }
     g_is_host = !strcmp(mode, "host") || !strcmp(mode, "steam-host") || (!mode[0] && is_p1);
     ws_set_host(g_is_host);
+    if (g_alien_full) alien_set_host(g_is_host);
     logf_("role: %s", g_is_host ? "host (owns the alien director)" : "joiner");
     if (!strncmp(mode, "steam-", 6)) {
         g_steam = 1;
@@ -208,6 +209,18 @@ static void net_send_world(void) {
 }
 
 static uint32_t g_wseen[64], g_wpeer_session;
+/* Partner's world events wait until our own level has been running a few seconds: replayed while it is still
+   starting up, they reach script entities that aren't finished yet and the game crashes (found in game: the joiner
+   loading into a level the host was already playing). Held in order, applied once the level is ready. */
+#define LEVEL_READY_MS 8000
+static volatile LONG g_lvl_ready;
+static WorldEvt g_whold[256]; static int g_whold_n;   /* g_cs */
+static void world_flush(void) {
+    WorldEvt evs[256]; int n;
+    EnterCriticalSection(&g_cs); n = g_whold_n; memcpy(evs, g_whold, (size_t)n * sizeof *evs); g_whold_n = 0; LeaveCriticalSection(&g_cs);
+    if (n) logf_("world: level ready, applying %d held partner event%s", n, n == 1 ? "" : "s");
+    for (int i = 0; i < n; i++) ws_apply(&evs[i]);
+}
 static void on_world(const WorldPkt *k) {
     if (k->session != g_wpeer_session) { memset(g_wseen, 0, sizeof g_wseen); g_wpeer_session = k->session; }   /* partner restarted */
     for (int i = 0; i < 64; i++) if (g_wseen[i] == k->seq) return;
@@ -215,7 +228,14 @@ static void on_world(const WorldPkt *k) {
     WorldEvt ev; memset(&ev, 0, sizeof ev);
     ev.method = k->method; ev.eid = k->eid; ev.type = k->type; ev.npath = k->npath; memcpy(ev.path, k->path, sizeof k->path);
     g_wrx++;
-    logf_("world: got #%u method %08x entity %08x path %08x/%08x (%d up)", k->seq, ev.method, ev.eid, ev.path[0], ev.path[1], ev.npath);
+    logf_("world: got #%u method %08x entity %08x path %08x/%08x (%d up)%s", k->seq, ev.method, ev.eid, ev.path[0], ev.path[1], ev.npath,
+          g_lvl_ready ? "" : ", held until our level is ready");
+    if (!g_lvl_ready) {
+        EnterCriticalSection(&g_cs);
+        if (g_whold_n < 256) g_whold[g_whold_n++] = ev;
+        LeaveCriticalSection(&g_cs);
+        return;
+    }
     ws_apply(&ev);
 }
 
@@ -418,7 +438,7 @@ static void cut_teleport_tick(void) {
     ticket = engine_teleport(at);
     if (!ticket) logf_("%s: can't move the player on this build", kind ? "regroup" : "cutscene");
 }
-static void game_tick_cb(void) { follow_write(); menu_tick(); cut_teleport_tick(); }
+static void game_tick_cb(void) { follow_write(); menu_tick(); cut_teleport_tick(); if (g_alien_full) alien_entity_tick(); }
 static void on_cutscene(void) { if (g_cut_on) InterlockedExchange(&g_cut_local, 1); }   /* game thread */
 static DWORD WINAPI follow_thread(LPVOID p) {
     (void)p;
@@ -543,14 +563,14 @@ static void read_chars(void) {
         if (tag == 0) {
             EnterCriticalSection(&g_cs); cut_trail_push(&g_trail, now, r); int alive = g_life.state == LIFE_ALIVE; LeaveCriticalSection(&g_cs);
             /* carry-along: a script moved us in one go (a lift between floors): tell the partner where from and to */
-            static float prev[3]; static DWORD prev_t;
-            DWORD tp = g_own_tp_t, l0 = g_level_t0;
-            if (prev_t && carry_is_jump(prev, r, (int32_t)(now - prev_t), tp ? (int32_t)(now - tp) : -1, l0 ? (int32_t)(now - l0) : 0, alive)) {
-                CarryPkt ck; proto_fill_carry(&ck, (uint32_t)now ^ (g_pid << 16) ^ 0xCA77u, prev, r);
+            static float prev[3]; static DWORD prev_t; static CarryWatch cw;
+            DWORD tp = g_own_tp_t, l0 = g_level_t0; float cf[3], ct[3];
+            if (prev_t && g_lvl_ready && carry_watch(&cw, prev, r, now, (int32_t)(now - prev_t), tp ? (int32_t)(now - tp) : -1, l0 ? (int32_t)(now - l0) : 0, alive, cf, ct)) {
+                CarryPkt ck; proto_fill_carry(&ck, (uint32_t)now ^ (g_pid << 16) ^ 0xCA77u, cf, ct);
                 for (int i = 0; i < 3; i++) net_raw(&ck, sizeof ck);
                 logf_("carry: a script moved us %.1f m (%.1f %.1f %.1f -> %.1f %.1f %.1f), telling the partner",
-                      sqrtf((r[0] - prev[0]) * (r[0] - prev[0]) + (r[1] - prev[1]) * (r[1] - prev[1]) + (r[2] - prev[2]) * (r[2] - prev[2])),
-                      prev[0], prev[1], prev[2], r[0], r[1], r[2]);
+                      sqrtf((ct[0] - cf[0]) * (ct[0] - cf[0]) + (ct[1] - cf[1]) * (ct[1] - cf[1]) + (ct[2] - cf[2]) * (ct[2] - cf[2])),
+                      cf[0], cf[1], cf[2], ct[0], ct[1], ct[2]);
             }
             memcpy(prev, r, 12); prev_t = now;
         }
@@ -593,12 +613,15 @@ static void on_alien(const AlienPkt *k) {
 static void on_carry(const CarryPkt *k) {
     if (k->id == g_carry_seen_id) return;
     g_carry_seen_id = k->id;
+    static DWORD last; DWORD now = GetTickCount();
+    if (!g_lvl_ready || (last && now - last < CARRY_EVERY_MS)) return;
     float me[3], to[3]; int have, alive;
     EnterCriticalSection(&g_cs);
     have = g_trail.n > 0; if (have) memcpy(me, g_trail.p[(g_trail.head + CUT_TRAIL - 1) % CUT_TRAIL], 12);
     alive = g_life.state == LIFE_ALIVE;
     LeaveCriticalSection(&g_cs);
     if (!carry_follow(alive, have, me, k->from, k->to, to)) { logf_("carry: partner was moved by a script; we weren't with them"); return; }
+    last = now;
     start_tp(to, 2);
     logf_("carry: partner was moved by a script and we were with them, going too (%.1f %.1f %.1f)", to[0], to[1], to[2]);
 }
@@ -997,6 +1020,14 @@ static DWORD WINAPI net_thread(LPVOID p) {
                 static int was_in;
                 if (!in_lvl) ws_settle(15000);   /* menus and loading: the level's start-up scripts run before the camera exists */
                 else if (!was_in) { logf_("worldsync: level started, not sending for 15 s"); g_level_t0 = now | 1; }
+                {   /* partner events wait for our level (on_world) */
+                    LONG ready = in_lvl && g_level_t0 && now - g_level_t0 > LEVEL_READY_MS;
+                    if (ready != g_lvl_ready) { InterlockedExchange(&g_lvl_ready, ready); if (ready) world_flush(); }
+                }
+                {   /* tests: AIC_DEBUG_SPAWN, 25 s into a level */
+                    static DWORD armed_for;
+                    if (in_lvl && g_alien_full && g_level_t0 && now - g_level_t0 > 25000 && armed_for != g_level_t0) { armed_for = g_level_t0; alien_debug_arm(); }
+                }
                 was_in = in_lvl;
             }
             {   /* builds, every 3 s */
@@ -1072,6 +1103,142 @@ static DWORD WINAPI net_thread(LPVOID p) {
     return 0;
 }
 
+/* The game checks some of its data files against a table of sizes and hashes (FILE_HASHES::verify_integrity, RVA
+   0x374CA0, called from 0x3DBFA4 and 0x5E8BA5) and quits silently when one differs. The levels -Skins writes
+   (tools/skinprep) fail it by design. OpenCAGE patches those two calls in AI.exe on disk; the mod leaves AI.exe alone
+   and points them at this function in memory instead. It waives the check only for a file skinprep changed (one with
+   a backup under coop_backup\skins\<LEVEL>\); every other file still gets the game's own check. */
+typedef uint8_t(__cdecl *integrity_fn)(const char *, const uint32_t *, uint32_t);
+static integrity_fn g_integrity_orig;
+static int skinprep_changed(const char *name) {
+    char up[MAX_PATH]; lstrcpynA(up, name, sizeof up);
+    for (char *q = up; *q; q++) { if (*q >= 'a' && *q <= 'z') *q -= 32; if (*q == '/') *q = 92; }
+    const char *pr = strstr(up, "PRODUCTION");
+    if (!pr || pr[10] != 92) return 0;
+    const char *rest = pr + 11;
+    char key[64], sub[MAX_PATH];
+    if (!strncmp(rest, "DLC", 3) && rest[3] == 92) {   /* PRODUCTION\DLC\<NAME>\...: the backup is DLC_<NAME> */
+        const char *e = strchr(rest + 4, 92); if (!e) return 0;
+        snprintf(key, sizeof key, "DLC_%.*s", (int)(e - rest - 4), rest + 4); lstrcpynA(sub, e + 1, sizeof sub);
+    } else {
+        const char *e = strchr(rest, 92); if (!e) return 0;
+        snprintf(key, sizeof key, "%.*s", (int)(e - rest), rest); lstrcpynA(sub, e + 1, sizeof sub);
+    }
+    char bk[MAX_PATH * 2]; snprintf(bk, sizeof bk, "%s\\coop_backup\\skins\\%s\\%s", g_dir, key, sub);
+    return GetFileAttributesA(bk) != INVALID_FILE_ATTRIBUTES;
+}
+static uint8_t __cdecl integrity_hook(const char *name, const uint32_t *table, uint32_t count) {
+    if (name && skinprep_changed(name)) { logf_("integrity: %s was changed by -Skins; the game's check is skipped for it", name); return 1; }
+    uint8_t ok = g_integrity_orig(name, table, count);
+    if (!ok) logf_("integrity: the game's check failed for %s (the game will quit)", name ? name : "?");
+    return ok;
+}
+static void integrity_install(void) {
+    uintptr_t base = (uintptr_t)GetModuleHandleW(NULL), target = base + 0x374CA0u;
+    static const uint32_t sites[2] = {0x3DBFA4u, 0x5E8BA5u};
+    int n = 0;
+    for (int i = 0; i < 2; i++) {
+        uint8_t *c = (uint8_t *)(base + sites[i]);
+        if (c[0] != 0xE8 || (uintptr_t)(c + 5) + (uintptr_t)(intptr_t)*(int32_t *)(c + 1) != target) continue;   /* not this build */
+        DWORD old; VirtualProtect(c, 5, PAGE_EXECUTE_READWRITE, &old);
+        *(int32_t *)(c + 1) = (int32_t)((uint8_t *)integrity_hook - (c + 5));
+        VirtualProtect(c, 5, old, &old); FlushInstructionCache(GetCurrentProcess(), c, 5);
+        n++;
+    }
+    g_integrity_orig = (integrity_fn)target;
+    logf_("integrity: %d of 2 file checks routed through the mod (levels changed by -Skins are let through)", n);
+}
+
+/* AIC_DIAG=1: log what ends the game (diagnosis). Serious exceptions with the faulting address, and calls to
+   ExitProcess / TerminateProcess from the game, each with the game-code return addresses found on the stack. */
+static uintptr_t g_exe_lo, g_exe_hi;
+static void diag_stack(const char *what, uintptr_t at, const uint32_t *sp) {
+    char line[512]; int n = snprintf(line, sizeof line, "diag: %s at exe+%#x; stack:", what, (unsigned)(at - g_exe_lo));
+    int k = 0;
+    for (int i = 0; i < 256 && k < 16 && n < (int)sizeof line - 16; i++) {
+        uint32_t v = 0; SIZE_T got = 0;
+        if (!ReadProcessMemory(GetCurrentProcess(), sp + i, &v, 4, &got) || got != 4) break;
+        if (v >= g_exe_lo && v < g_exe_hi) { n += snprintf(line + n, sizeof line - (size_t)n, " %#x", (unsigned)(v - g_exe_lo)); k++; }
+    }
+    logf_("%s", line);
+}
+static LONG CALLBACK diag_veh(EXCEPTION_POINTERS *e) {
+    static volatile LONG left = 40;
+    DWORD c = e->ExceptionRecord->ExceptionCode;
+    if (c >= 0xC0000000u && c != 0xC0000096u && InterlockedDecrement(&left) >= 0) {
+        char w[64]; snprintf(w, sizeof w, "exception %08lx", (unsigned long)c);
+        diag_stack(w, (uintptr_t)e->ContextRecord->Eip, (const uint32_t *)(uintptr_t)e->ContextRecord->Esp);
+        if (g_log) fflush(g_log);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+static void (WINAPI *g_exit_orig)(UINT);
+static BOOL (WINAPI *g_term_orig)(HANDLE, UINT);
+static void WINAPI diag_exit(UINT code) {
+    uint32_t mark = 0; char w[48]; snprintf(w, sizeof w, "ExitProcess(%u)", code);
+    diag_stack(w, (uintptr_t)__builtin_return_address(0), &mark);
+    if (g_log) fflush(g_log);
+    g_exit_orig(code);
+}
+static BOOL WINAPI diag_term(HANDLE h, UINT code) {
+    if (GetProcessId(h) == GetCurrentProcessId()) {
+        uint32_t mark = 0; char w[48]; snprintf(w, sizeof w, "TerminateProcess(self, %u)", code);
+        diag_stack(w, (uintptr_t)__builtin_return_address(0), &mark);
+        if (g_log) fflush(g_log);
+    }
+    return g_term_orig(h, code);
+}
+static void diag_iat(HMODULE mod, const char *fn, void *hook, void **orig) {
+    uint8_t *base = (uint8_t *)mod;
+    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+    IMAGE_DATA_DIRECTORY dd = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    for (IMAGE_IMPORT_DESCRIPTOR *d = (IMAGE_IMPORT_DESCRIPTOR *)(base + dd.VirtualAddress); d->Name; d++) {
+        if (lstrcmpiA((char *)(base + d->Name), "KERNEL32.dll")) continue;
+        IMAGE_THUNK_DATA *ot = (IMAGE_THUNK_DATA *)(base + d->OriginalFirstThunk), *ft = (IMAGE_THUNK_DATA *)(base + d->FirstThunk);
+        for (; ot->u1.AddressOfData; ot++, ft++) {
+            if (ot->u1.Ordinal & IMAGE_ORDINAL_FLAG) continue;
+            if (strcmp((char *)((IMAGE_IMPORT_BY_NAME *)(base + ot->u1.AddressOfData))->Name, fn)) continue;
+            DWORD old; VirtualProtect(&ft->u1.Function, 4, PAGE_READWRITE, &old);
+            *orig = (void *)(uintptr_t)ft->u1.Function; ft->u1.Function = (uintptr_t)hook;
+            VirtualProtect(&ft->u1.Function, 4, old, &old);
+        }
+    }
+}
+static void (WINAPI *g_ods_orig)(LPCSTR);
+static void WINAPI diag_ods(LPCSTR t) {
+    static volatile LONG left = 400;
+    if (t && InterlockedDecrement(&left) >= 0) {
+        char m[300]; lstrcpynA(m, t, sizeof m);
+        for (char *q = m; *q; q++) if (*q == 10 || *q == 13) *q = 32;
+        logf_("diag: debug: %s", m);
+    }
+    if (g_ods_orig) g_ods_orig(t);
+}
+/* the game's "request quit" (sets the quit flag at exe+0x17DA920): log who asks */
+static void __cdecl diag_quit(void) {
+    uint32_t mark = 0;
+    diag_stack("quit requested", (uintptr_t)__builtin_return_address(0), &mark);
+    if (g_log) fflush(g_log);
+    *(volatile uint8_t *)(g_exe_lo + 0x17DA920u) = 1;
+}
+static void diag_install(void) {
+    HMODULE exe = GetModuleHandleW(NULL);
+    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)((uint8_t *)exe + ((IMAGE_DOS_HEADER *)exe)->e_lfanew);
+    g_exe_lo = (uintptr_t)exe; g_exe_hi = g_exe_lo + nt->OptionalHeader.SizeOfImage;
+    AddVectoredExceptionHandler(1, diag_veh);
+    diag_iat(exe, "ExitProcess", (void *)diag_exit, (void **)&g_exit_orig);
+    diag_iat(exe, "TerminateProcess", (void *)diag_term, (void **)&g_term_orig);
+    diag_iat(exe, "OutputDebugStringA", (void *)diag_ods, (void **)&g_ods_orig);
+    uint8_t *q = (uint8_t *)(g_exe_lo + 0x614770u);
+    if (q[0] == 0xC6 && q[1] == 0x05 && q[6] == 0x01 && q[7] == 0xC3) {   /* mov byte [flag], 1 ; ret */
+        DWORD old; VirtualProtect(q, 8, PAGE_EXECUTE_READWRITE, &old);
+        q[0] = 0xE9; *(int32_t *)(q + 1) = (int32_t)((uint8_t *)diag_quit - (q + 5));
+        VirtualProtect(q, 8, old, &old); FlushInstructionCache(GetCurrentProcess(), q, 8);
+        logf_("diag: quit request hooked");
+    } else logf_("diag: quit request: unexpected bytes %02x %02x", q[0], q[1]);
+    logf_("diag: watching exceptions and exits (exit hook %s, terminate hook %s)", g_exit_orig ? "on" : "off", g_term_orig ? "on" : "off");
+}
+
 static void init(HMODULE self) {
     InitializeCriticalSection(&g_cs);
     g_pid = GetCurrentProcessId();
@@ -1087,6 +1254,8 @@ static void init(HMODULE self) {
     snprintf(p, sizeof p, "%s\\coop_logs\\coopnet_%s_%lu.log", dir, g_profile, g_pid); g_log = fopen(p, "w");
     snprintf(p, sizeof p, "%s\\coop_logs\\cam_%s_%lu.csv", dir, g_profile, g_pid); g_csv = fopen(p, "w");
     if (g_csv) { fprintf(g_csv, "ms"); for (int i = 0; i < 16; i++) fprintf(g_csv, ",r%d", i); fprintf(g_csv, ",pv,px,py,pz\n"); }
+    integrity_install();
+    if (GetEnvironmentVariableA("AIC_DIAG", b, sizeof b) && b[0] == '1') diag_install();
     if (GetEnvironmentVariableA("AIC_FWD_SIGN", b, sizeof b)) g_fwd_sign = atoi(b) < 0 ? -1 : 1;
     if (GetEnvironmentVariableA("AIC_COUCH_SEAT", b, sizeof b) && b[0]) {
         g_couch = 1; g_seat = atoi(b);

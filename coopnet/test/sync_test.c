@@ -168,6 +168,26 @@ int main(void) {
         float me_far[3] = {10, 0, 0};
         CHECK(!carry_follow(1, 1, me_far, from, to, out), "elsewhere: stays");
         CHECK(!carry_follow(0, 1, me, from, to, out), "dead: stays");
+        /* settled moves only (found in game: the alien's kill shook the player back and forth and flooded carries) */
+        CarryWatch w; memset(&w, 0, sizeof w); float f2[3], t2[3];
+        float p0[3] = {0, 0, 0}, p1[3] = {0, 6, 0}, p1b[3] = {0.1f, 6, 0};
+        CHECK(!carry_watch(&w, p0, p1, 1000, 33, -1, 20000, 1, f2, t2), "a lift jump: not yet (settling)");
+        CHECK(!carry_watch(&w, p1, p1b, 1300, 33, -1, 20000, 1, f2, t2), "still settling");
+        CHECK(carry_watch(&w, p1b, p1b, 1600, 33, -1, 20000, 1, f2, t2) && near3(t2, 0, 6, 0) && near3(f2, 0, 0, 0), "settled: told once");
+        CHECK(!carry_watch(&w, p1b, p1b, 1700, 33, -1, 20000, 1, f2, t2), "only once");
+        CarryWatch k2; memset(&k2, 0, sizeof k2);
+        float q0[3] = {0, 0, 0}, q1[3] = {0, 0, 4};
+        int sent = 0; uint32_t t = 30000;
+        for (int i = 0; i < 40; i++, t += 50) sent += carry_watch(&k2, (i & 1) ? q1 : q0, (i & 1) ? q0 : q1, t, 50, -1, 30000, 1, f2, t2);
+        for (int i = 0; i < 20; i++, t += 50) sent += carry_watch(&k2, q0, q0, t, 50, -1, 30000, 1, f2, t2);
+        CHECK(sent == 0, "jumping back and forth (a kill animation): never sent");
+        CarryWatch k3; memset(&k3, 0, sizeof k3);
+        carry_watch(&k3, p0, p1, 1000, 33, -1, 20000, 1, f2, t2);
+        CHECK(!carry_watch(&k3, p1, p1, 1600, 33, -1, 20000, 0, f2, t2), "died while settling: not sent");
+        CarryWatch k4; memset(&k4, 0, sizeof k4); int n4 = 0;
+        n4 += carry_watch(&k4, p0, p1, 1000, 33, -1, 20000, 1, f2, t2); n4 += carry_watch(&k4, p1, p1, 1600, 33, -1, 20000, 1, f2, t2);
+        n4 += carry_watch(&k4, p1, p0, 4000, 33, -1, 20000, 1, f2, t2); n4 += carry_watch(&k4, p0, p0, 4600, 33, -1, 20000, 1, f2, t2);
+        CHECK(n4 == 1, "a second ride within 8 s: not sent");
         CarryPkt ck; proto_fill_carry(&ck, 7, from, to);
         CHECK(proto_check_carry(&ck, sizeof ck), "carry packet round trip");
         ck.to[1] = 9; CHECK(!proto_check_carry(&ck, sizeof ck), "carry packet checksum");

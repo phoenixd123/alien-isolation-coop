@@ -33,7 +33,8 @@ static class P
         var skins = (Opt("--skins")?.Split(',') ?? DefaultSkins).Select(s => s.Trim().ToUpperInvariant()).ToArray();
         var only = Opt("--levels")?.Split(',').Select(s => s.Trim().ToUpperInvariant()).ToHashSet();
         // roundtrip: load and save, add nothing (the model files must come back byte for byte); check: write and verify, don't publish
-        bool dry = a.Contains("--dry"), restore = a.Contains("--restore"), roundtrip = a.Contains("--roundtrip"), checkOnly = a.Contains("--check") || roundtrip;
+        bool dry = a.Contains("--dry"), restore = a.Contains("--restore"), roundtrip = a.Contains("--roundtrip"), checkOnly = a.Contains("--check") || (roundtrip && !a.Contains("--install")), noScripts = a.Contains("--no-scripts");
+        if (Opt("--stage") is string st) Importer.Stage = int.Parse(st);   // diagnosis: 1 materials, 2 + models, 3 + renderables, 4 + animation/collision maps   // --roundtrip --install: install it (diagnosis)
         if (System.Diagnostics.Process.GetProcessesByName("AI").Length > 0) { Console.WriteLine("Close the game first."); return 2; }
 
         var env = Path.Combine(game, "DATA", "ENV");
@@ -76,7 +77,7 @@ static class P
                     var root = src.Commands.GetComposite("DisplayModel:" + s)!;
                     var closure = Closure(src.Commands, new[] { root });
                     Validate(src, closure);
-                    Import(src, dest, closure);
+                    Import(src, dest, closure, noScripts);   // --no-scripts: the assets only (diagnosis)
                 }
                 var stage = Path.Combine(game, "coop_backup", "stage", name);
                 if (Directory.Exists(stage)) Directory.Delete(stage, true);
@@ -88,7 +89,7 @@ static class P
                 var check = LoadChecked(stage, global, out var warn2);   // re-load what we wrote
                 if (warn2 != null) throw new InvalidDataException("written scripts don't load cleanly: " + warn2);
                 // every added skin must resolve in the written files, to the same mesh bytes as in its own level
-                foreach (var s in missing)
+                foreach (var s in noScripts ? new List<string>() : missing)
                 {
                     var comps = Closure(check.Commands, new[] { check.Commands.GetComposite("DisplayModel:" + s) ?? throw new InvalidDataException($"{s} not in the written scripts") });
                     Validate(check, comps);
@@ -228,7 +229,7 @@ static class P
         foreach (var lod in el.LODs) CheckElement(a, lod, seen);
     }
 
-    static void Import(Assets src, Assets dst, IReadOnlyList<Composite> closure)
+    static void Import(Assets src, Assets dst, IReadOnlyList<Composite> closure, bool noScripts = false)
     {
         var imp = new Importer(src, dst);
         foreach (var comp in closure)
@@ -245,7 +246,7 @@ static class P
                 if (a.Length != b.Length) throw new InvalidDataException("resource clone incomplete");
                 for (int i = 0; i < a.Length; i++) imp.Resource(a[i], b[i]);
             }
-            dst.Commands.Entries.Add(copy);
+            if (!noScripts) dst.Commands.Entries.Add(copy);
         }
     }
 
@@ -255,8 +256,10 @@ static class P
         readonly Dictionary<Materials.Material, Materials.Material> mats = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         readonly Dictionary<List<RenderableElements.Element>, List<RenderableElements.Element>> rends = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
+        public static int Stage = 9;
         public void Resource(ResourceReference o, ResourceReference c)
         {
+            if (Stage < 4 && o.resource_type != ResourceType.RENDERABLE_INSTANCE) return;
             switch (o.resource_type)
             {
                 case ResourceType.RENDERABLE_INSTANCE: c.RenderableInstance = Elements(o.RenderableInstance); break;
@@ -269,6 +272,16 @@ static class P
         List<RenderableElements.Element> Elements(List<RenderableElements.Element> o)
         {
             if (rends.TryGetValue(o, out var cached)) return cached;
+            if (Stage < 3)
+            {
+                foreach (var el in o)
+                {
+                    if (Stage >= 2) Model(src.Models.FindModel(el.Model)!);
+                    Material(el.Material);
+                    Elements(el.LODs);
+                }
+                rends.Add(o, o); return o;
+            }
             var result = new List<RenderableElements.Element>();
             foreach (var el in o)
             {
@@ -298,8 +311,8 @@ static class P
                     {
                         var f = o.Components[ci].LODs[li].Submeshes[si]; var t = copy.Components[ci].LODs[li].Submeshes[si];
                         t.Material = f.Material == null ? null! : Material(f.Material);
-                        t.WeightedCollision = dst.Collisions.ImportEntry(f.WeightedCollision);
-                        t.MorphAnimSet = dst.Morphs.ImportEntry(f.MorphAnimSet);
+                        t.WeightedCollision = Environment.GetEnvironmentVariable("SKINPREP_DIAG_NOCOL") == "1" ? null! : dst.Collisions.ImportEntry(f.WeightedCollision);
+                        t.MorphAnimSet = Environment.GetEnvironmentVariable("SKINPREP_DIAG_NOMORPH") == "1" ? null! : dst.Morphs.ImportEntry(f.MorphAnimSet);
                     }
             var existing = dst.Models.Entries.FirstOrDefault(m => string.Equals(m.Name, o.Name, StringComparison.OrdinalIgnoreCase));
             if (existing != null)

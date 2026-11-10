@@ -91,6 +91,33 @@ static inline int carry_is_jump(const float a[3], const float b[3], int32_t dt_m
     if (since_tp_ms >= 0 && since_tp_ms < CARRY_QUIET_MS) return 0;
     return d == d && d > CARRY_JUMP_M && d < CARRY_MAX_M;
 }
+/* A move only counts once it has settled: one jump, then the player stays near where it landed for CARRY_SETTLE_MS
+   with no other jump. Kill and grab animations (found in game: the alien's kill moved the player 3-4 m back and forth
+   several times a second) and menus jump again and again and never settle. At most one every CARRY_EVERY_MS. */
+#define CARRY_SETTLE_MS 500
+#define CARRY_SHAKY_MS  2000      /* a jump this soon after another one: not a clean move */
+#define CARRY_EVERY_MS  8000
+typedef struct { int pending; float from[3], to[3]; uint32_t t_jump, last_jump, last_sent; } CarryWatch;
+/* Feed every position sample (prev -> cur). 1 when a settled move should be told to the partner (from/to set). */
+static inline int carry_watch(CarryWatch *w, const float prev[3], const float cur[3], uint32_t now, int32_t dt_ms,
+                              int32_t since_tp_ms, int32_t in_level_ms, int alive, float from[3], float to[3]) {
+    if (carry_is_jump(prev, cur, dt_ms, since_tp_ms, in_level_ms, alive)) {
+        int shaky = w->pending || (w->last_jump && (int32_t)(now - w->last_jump) < CARRY_SHAKY_MS);
+        w->last_jump = now | 1;
+        if (shaky) { w->pending = 0; return 0; }
+        w->pending = 1; memcpy(w->from, prev, 12); memcpy(w->to, cur, 12); w->t_jump = now;
+        return 0;
+    }
+    if (!w->pending) return 0;
+    float dx = cur[0] - w->to[0], dy = cur[1] - w->to[1], dz = cur[2] - w->to[2];
+    if (!alive || dx * dx + dy * dy + dz * dz > 1.0f) { w->pending = 0; return 0; }
+    if ((int32_t)(now - w->t_jump) < CARRY_SETTLE_MS) return 0;
+    w->pending = 0;
+    if (w->last_sent && (int32_t)(now - w->last_sent) < CARRY_EVERY_MS) return 0;
+    w->last_sent = now | 1;
+    memcpy(from, w->from, 12); memcpy(to, w->to, 12);
+    return 1;
+}
 /* The partner jumped from `from` to `to`; we're at `me`. 1 and the spot to move to if we were with them. */
 static inline int carry_follow(int alive, int have_me, const float me[3], const float from[3], const float to[3], float out[3]) {
     if (!alive || !have_me) return 0;

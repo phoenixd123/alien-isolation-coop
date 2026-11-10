@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 #include "alien.h"
 #include "alien_pup.h"
 #include "alien_interp.h"
@@ -86,7 +87,7 @@ static uint32_t g_kills; static int g_body_alive;
 /* host: the partner, for the noise */
 static float g_partner[3]; static DWORD g_partner_t; static float g_partner_mps; static DWORD g_noise_t;
 /* joiner: what the host sent */
-static AlienExPkt g_theirs; static volatile DWORD g_theirs_t; static AlienTrack g_track;
+static AlienExPkt g_theirs; static volatile DWORD g_theirs_t, g_theirs_any_t; static AlienTrack g_track;
 static int g_kills_known; static uint32_t g_kills_seen; static volatile LONG g_kill_due;
 
 /* AI-thread state (joiner's puppet) */
@@ -188,6 +189,9 @@ static void put_at(uint32_t c, const float p[3]) {
 
 /* ---- host: read the alien, watch the partner's body, make the partner heard ---- */
 static void host_frame(uint32_t c) {
+    static uint32_t seen_id;
+    uint32_t cid = u32(c + 0x50);
+    if (cid != seen_id) { seen_id = cid; if (g_log) g_log("alien: host's alien found (character %u), sharing it", cid); }
     AlienExPkt k; memset(&k, 0, sizeof k);
     k.flags = ALX_FOUND;
     rd(c + 0x70, k.pos, 12); rd(c + 0x174, &k.yaw, 4);
@@ -308,11 +312,23 @@ static void __attribute__((thiscall)) behaviour_hook(void *self, float elapsed, 
     AlienExPkt h; DWORD now = GetTickCount();
     EnterCriticalSection(&g_cs); h = g_theirs; DWORD ht = g_theirs_t; LeaveCriticalSection(&g_cs);
     int fresh = ht && now - ht < STALE_MS && (h.flags & ALX_FOUND);
+    /* While the host is connected our alien never thinks for itself, even when the host's alien is gone for a moment:
+       it would hunt us on its own. It only does again when we hear nothing from the host for a few seconds. */
+    DWORD any = g_theirs_any_t;
+    int connected = any && now - any < 3000;
     uint32_t id = u32(c + 0x50);
     if (g_pup && ((uint32_t)(uintptr_t)g_pup != c || g_pup_id != id)) release("the alien changed", 1);
-    if (!fresh) {
-        if ((uint32_t)(uintptr_t)g_pup == c) release(ht ? "the host's alien is gone" : "no word from the host", 0);
+    if (!connected) {
+        if ((uint32_t)(uintptr_t)g_pup == c) release("no word from the host", 0);
         g_behaviour_orig(self, elapsed, time);
+        return;
+    }
+    if (!fresh) {   /* the host's alien isn't there just now: ours waits where it is */
+        if (!g_pup) { g_pup = (uint8_t *)(uintptr_t)c; g_pup_id = id; }
+        t_skip_tree = 1;
+        g_behaviour_orig(self, elapsed, time);
+        t_skip_tree = 0;
+        coast();
         return;
     }
     if (!g_pup) { g_pup = (uint8_t *)(uintptr_t)c; g_pup_id = id; if (g_log) g_log("alien: the joiner's alien follows the host's now"); }
@@ -372,8 +388,23 @@ int alien_install(void (*logf)(const char *, ...), int host) {
     g_behaviour_orig = (behaviour_fn)detour((uint8_t *)(g_base + RVA_BEHAVIOUR), 9, (void *)behaviour_hook);
     if (!g_tree_orig || !g_behaviour_orig) { logf("alien: couldn't hook"); return 0; }
     g_on = 1;
-    logf("alien: shared alien on (%s)", host ? "host: ours is the real one" : "joiner: ours follows the host's");
+    logf("alien: shared alien on");
     return 1;
+}
+
+void alien_set_host(int host) {
+    g_host = host;
+    if (g_on && g_log) g_log("alien: %s", host ? "host: ours is the real one" : "joiner: ours follows the host's");
+}
+
+/* The first living alien in the character manager's list of the others (not players), 0 if none. Any thread. */
+static uint32_t find_alien(void) {
+    uint32_t g = globals(), mgr = g ? u32(g + 0x08) : 0, list = mgr ? u32(mgr + 0xD0) : 0, n = mgr ? u32(mgr + 0xD4) : 0;
+    for (uint32_t i = 0; list && i < n && i < 64; i++) {
+        uint32_t c = u32(list + i * 4);
+        if (c && char_class(c) == CLASS_ALIEN && health(c) > 0) return c;
+    }
+    return 0;
 }
 
 int alien_read(AlienExPkt *out) {
@@ -382,6 +413,19 @@ int alien_read(AlienExPkt *out) {
     int ok = g_mine_t && GetTickCount() - g_mine_t < STALE_MS;
     if (ok) *out = g_mine; else { memset(out, 0, sizeof *out); out->setup = 0xFFFFFFFFu; out->kills = g_kills; }
     LeaveCriticalSection(&g_cs);
+    if (!ok) {
+        /* No behaviour update for a while (the alien is in a kill or another animation, or the vents): it may still be
+           there. Read it straight from its character, so the joiner's alien stays with it instead of letting go
+           (found in game: the joiner's alien, let go during the host alien's kill, went for the joiner). */
+        uint32_t c = find_alien();
+        if (c && rd(c + 0x70, out->pos, 12) && rd(c + 0x174, &out->yaw, 4)) {
+            out->flags = ALX_FOUND;
+            uint32_t loco = u32(c + 0x42A8); uint8_t vents = 0;
+            if (loco && rd(loco + 0x1E3, &vents, 1) && vents) out->flags |= ALX_VENTS;
+            rd(c + 0x42A4, &out->setup, 4);
+            ok = 1;
+        }
+    }
     return ok;
 }
 
@@ -389,6 +433,7 @@ void alien_from_host(const AlienExPkt *k) {
     if (!g_on || g_host) return;
     DWORD now = GetTickCount();
     EnterCriticalSection(&g_cs);
+    g_theirs_any_t = now;
     if (k->seq - g_theirs.seq < 0x80000000u || now - g_theirs_t > 3000) {
         g_theirs = *k;
         if (k->flags & ALX_FOUND) { g_theirs_t = now; alien_track_push(&g_track, now, k->pos); }
@@ -412,3 +457,40 @@ void alien_partner_at(const float pos[3]) {
 }
 
 int alien_following(void) { return g_on && !g_host && g_pup != NULL; }
+
+/* Tests only: AIC_DEBUG_SPAWN=<entity hex>:<instance hex> calls the generic "spawn" method on that script entity
+   (a level's alien character) once, when alien_debug_arm() says so. Runs on the script thread (the call_method hook),
+   the way OpenCAGE's AI_STATE::CallSpawnMethod does it: the entity manager's access lock, its lookup by handle, the
+   queued method call, and the release of the counted pointer. Same addresses (Steam build). */
+static volatile LONG g_dbg_armed;
+void alien_debug_arm(void) { InterlockedExchange(&g_dbg_armed, 1); }
+void alien_entity_tick(void) {
+    if (!InterlockedExchange(&g_dbg_armed, 0)) return;
+    char v[48]; unsigned ent = 0, inst = 0;
+    if (!GetEnvironmentVariableA("AIC_DEBUG_SPAWN", v, sizeof v) || sscanf(v, "%x:%x", &ent, &inst) != 2) return;
+    uintptr_t b = (uintptr_t)GetModuleHandleW(NULL);
+    static const uint8_t s_lock[2] = {0x56, 0x68}, s_find[3] = {0x55, 0x8B, 0xEC}, s_rel[3] = {0x56, 0x8B, 0xF1};
+    if (!bytes_ok(b + 0x51E1B0u, s_lock, 2) || !bytes_ok(b + 0x5236A0u, s_find, 3) || !bytes_ok(b + 0x5425A0u, s_find, 3) || !bytes_ok(b + 0x198230u, s_rel, 3)) {
+        if (g_log) g_log("alien: debug spawn: functions don't match this build"); return;
+    }
+    typedef void(__attribute__((thiscall)) *acc_fn)(void *);
+    typedef void **(__attribute__((thiscall)) *find_fn)(void *, void **, const uint32_t *);
+    typedef void(__attribute__((thiscall)) *call_fn)(void *, void **, const uint32_t *, uint32_t);
+    typedef void(__attribute__((thiscall)) *rel_fn)(void **);
+    uint32_t mgr = u32(b + 0x134EF40u);
+    if (!mgr) { if (g_log) g_log("alien: debug spawn: no entity manager"); return; }
+    uint8_t access[8] = {0}; void *found = NULL;
+    const uint32_t handle[2] = {ent, inst}, method = 0x38BD237Au;
+    ((acc_fn)(b + 0x51E1B0u))(access);
+    ((find_fn)(b + 0x5236A0u))((void *)(uintptr_t)mgr, &found, handle);
+    int called = 0;
+    if (found && u32((uintptr_t)found + 12)) {
+        uint8_t tmp[0x40] __attribute__((aligned(8))); memset(tmp, 0, sizeof tmp);
+        *(void **)(tmp + 0x24) = found;
+        ((call_fn)(b + 0x5425A0u))(tmp, &found, &method, 0);
+        called = 1;
+    }
+    if (found) ((rel_fn)(b + 0x198230u))(&found);
+    ((acc_fn)(b + 0x51E1D0u))(access);
+    if (g_log) g_log("alien: debug spawn %08x:%08x -> %s", ent, inst, called ? "spawn called" : "entity not found");
+}
